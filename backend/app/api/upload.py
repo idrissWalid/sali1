@@ -203,13 +203,16 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
 
                 Organise ta réponse sous cette forme :
 
-                ### 1. THÈMES PRINCIPAUX
+                ### 1. RÉSUMÉ
+                [Rédige un paragraphe de 3 à 5 phrases résumant le contenu général et l'objectif du document]
+
+                ### 2. THÈMES PRINCIPAUX
                 [Présente les grands thèmes abordés sous forme de liste à puces naturelle]
 
-                ### 2. POINTS CLÉS
+                ### 3. POINTS CLÉS
                 [Présente 3 à 5 informations importantes sous forme de liste à puces naturelle]
 
-                ### 3. PROPOSITIONS
+                ### 4. PROPOSITIONS
                 [Propose 3 questions ou analyses pertinentes suggérées par ce document]
                 """
                 if not model or model.startswith("gemini"):

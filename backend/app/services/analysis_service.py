@@ -23,6 +23,25 @@ def build_analysis_prompt(profile: dict, stats: dict) -> str:
     variables = stats.get("variables", {})
     missing = stats.get("missing", {})
     correlations = stats.get("correlations", {})
+    
+    n_rows = profile.get("rows", 0)
+
+    # Détection des colonnes ID
+    id_cols = []
+    for col in profile.get("column_names", []):
+        col_lower = str(col).lower()
+        if col_lower in ["id", "index"] or "id_" in col_lower or "_id" in col_lower:
+            id_cols.append(col)
+        else:
+            col_stats = variables.get(col, {})
+            n_distinct = col_stats.get("n_valeurs_distinctes", 0)
+            var_type = col_stats.get("type", "")
+            if n_rows > 0 and n_distinct == n_rows and var_type == "Numeric":
+                id_cols.append(col)
+
+    id_text = ""
+    if id_cols:
+        id_text = f"\nATTENTION : Les colonnes suivantes sont des identifiants (IDs) : {', '.join(id_cols)}.\nElles ne sont pas des variables statistiques. Ne l'oublie pas dans tes analyses (ne cherche pas de corrélation, de moyenne ou d'interprétation quantitative sur ces colonnes)."
 
     ambiguous = profile.get("ambiguous_columns", [])
     ambiguous_text = ""
@@ -78,6 +97,7 @@ APERÇU DES DONNÉES (5 premières lignes) :
 
 Rédige une analyse en français de manière claire et accessible.
 Ne commence JAMAIS l'analyse par des formules d'introduction ou des salutations clichées/répétitives (par exemple : "Bonjour", "En tant qu'expert en analyse de données, voici...", "En tant qu'agent...", "Voici le résultat de..."). Rentre directement dans le sujet.
+{id_text}
 {ambiguous_text}
 
 Ta réponse doit comporter EXACTEMENT trois sections :
