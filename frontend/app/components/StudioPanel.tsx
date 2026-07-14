@@ -98,7 +98,14 @@ export default function StudioPanel({ sessionId }: Props) {
           onMouseEnter={e => { if (sessionId) (e.currentTarget as HTMLElement).style.background = "var(--bubble-user)"; }}
           onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "var(--bubble-ai)"}
         >
-          <span style={{ fontSize: "20px" }}>📄</span>
+          <span style={{ display: "inline-flex", alignItems: "center" }}>
+            <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+              <polyline points="14 2 14 8 20 8" />
+              <path d="M12 18v-6" />
+              <path d="m9 15 3 3 3-3" />
+            </svg>
+          </span>
           <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-main)", marginTop: "10px", lineHeight: 1.3 }}>
             Rapport PDF
           </div>
@@ -124,7 +131,15 @@ export default function StudioPanel({ sessionId }: Props) {
           onMouseEnter={e => { if (sessionId) (e.currentTarget as HTMLElement).style.background = "var(--bubble-user)"; }}
           onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "var(--bubble-ai)"}
         >
-          <span style={{ fontSize: "20px" }}>📝</span>
+          <span style={{ display: "inline-flex", alignItems: "center" }}>
+            <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="16" x2="8" y1="13" y2="13" />
+              <line x1="16" x2="8" y1="17" y2="17" />
+              <line x1="10" x2="8" y1="9" y2="9" />
+            </svg>
+          </span>
           <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-main)", marginTop: "10px", lineHeight: 1.3 }}>
             Rapport Word
           </div>

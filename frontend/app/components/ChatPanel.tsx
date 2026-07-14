@@ -5,6 +5,7 @@ import ChatSettingsModal from "./ChatSettingsModal";
 import ModelsModal from "./ModelsModal";
 import ChatMoreMenu from "./ChatMoreMenu";
 import ImageLightbox from "./ImageLightbox";
+import { ImageZoom, Image } from "./ImageZoom";
 import Modal from "./Modal";
 import { SmoothInput } from "./SmoothInput";
  
@@ -558,21 +559,19 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
                     {msg.images.map((img, j) => (
-                      <img
+                      <ImageZoom
                         key={j}
-                        src={`data:image/png;base64,${img}`}
-                        alt={`Visualisation ${j + 1}`}
-                        onClick={() => setLightboxImage(`data:image/png;base64,${img}`)}
                         style={{
                           width: "100%",
                           borderRadius: "10px",
                           border: "1px solid var(--border-color)",
-                          cursor: "zoom-in",
-                          transition: "opacity 0.2s",
                         }}
-                        onMouseEnter={e => e.currentTarget.style.opacity = "0.9"}
-                        onMouseLeave={e => e.currentTarget.style.opacity = "1"}
-                      />
+                      >
+                        <Image
+                          src={`data:image/png;base64,${img}`}
+                          alt={`Visualisation ${j + 1}`}
+                        />
+                      </ImageZoom>
                     ))}
                   </div>
                 )}

@@ -26,3 +26,4 @@ timecopilot
 tf-keras
 openai-whisper
 soundfile
+torch>=2.6.0

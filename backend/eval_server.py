@@ -45,7 +45,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib.enums import TA_JUSTIFY
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel
@@ -402,32 +402,51 @@ def run_worker(api_url: str, summary_key: str, n_samples: int, split: str, model
 
             # BERTScore
             log(f"🧠 Calcul BERTScore batch sur {len(ok_items)} documents…")
-            P, R, F1 = bert_score_fn(hyps, refs, lang="fr", verbose=False, device=DEVICE)
-            for r, (p, rc, f) in zip(ok_items, zip(P.tolist(), R.tolist(), F1.tolist())):
-                r["bert_score"] = {
-                    "precision": round(p,  4),
-                    "recall":    round(rc, 4),
-                    "f1":        round(f,  4),
-                }
-                log(f"  BERT {r['doc_id']} → F1={f:.3f}")
+            try:
+                chunk_size = 100
+                for i in range(0, len(ok_items), chunk_size):
+                    chk_refs = refs[i:i+chunk_size]
+                    chk_hyps = hyps[i:i+chunk_size]
+                    P, R, F1 = bert_score_fn(chk_hyps, chk_refs, lang="fr", verbose=False, device=DEVICE)
+                    for r, p, rc, f in zip(ok_items[i:i+chunk_size], P.tolist(), R.tolist(), F1.tolist()):
+                        r["bert_score"] = {
+                            "precision": round(p,  4),
+                            "recall":    round(rc, 4),
+                            "f1":        round(f,  4),
+                        }
+                    log(f"  BERT batch {i//chunk_size + 1}/{(len(ok_items)-1)//chunk_size + 1} traité")
+            except Exception as e:
+                log(f"⚠ BERTScore indisponible : {e}")
 
             # BLEURT
             log(f"📐 Calcul BLEURT batch sur {len(ok_items)} documents (checkpoint={BLEURT_CHECKPOINT})…")
             try:
-                bleurt_scores = compute_bleurt_batch(refs, hyps)
-                for r, b in zip(ok_items, bleurt_scores):
+                chunk_size = 100
+                all_bleurt = []
+                for i in range(0, len(ok_items), chunk_size):
+                    chk_refs = refs[i:i+chunk_size]
+                    chk_hyps = hyps[i:i+chunk_size]
+                    batch_scores = compute_bleurt_batch(chk_refs, chk_hyps)
+                    all_bleurt.extend(batch_scores)
+                    log(f"  BLEURT batch {i//chunk_size + 1}/{(len(ok_items)-1)//chunk_size + 1} traité")
+                for r, b in zip(ok_items, all_bleurt):
                     r["bleurt"] = round(float(b), 4)
-                    log(f"  BLEURT {r['doc_id']} → {r['bleurt']:.3f}")
             except Exception as e:
                 log(f"⚠ BLEURT indisponible : {e}")
 
             # BARTScore
             log(f"📐 Calcul BARTScore batch sur {len(ok_items)} documents (modèle={BARTSCORE_MODEL}, device={DEVICE})…")
             try:
-                bart_scores = compute_bartscore_batch(refs, hyps)
-                for r, s in zip(ok_items, bart_scores):
+                chunk_size = 100
+                all_bart = []
+                for i in range(0, len(ok_items), chunk_size):
+                    chk_refs = refs[i:i+chunk_size]
+                    chk_hyps = hyps[i:i+chunk_size]
+                    batch_scores = compute_bartscore_batch(chk_refs, chk_hyps)
+                    all_bart.extend(batch_scores)
+                    log(f"  BARTScore batch {i//chunk_size + 1}/{(len(ok_items)-1)//chunk_size + 1} traité")
+                for r, s in zip(ok_items, all_bart):
                     r["bart_score"] = s
-                    log(f"  BART {r['doc_id']} → raw={s['raw']:.3f} norm={s['norm']:.3f}")
             except Exception as e:
                 log(f"⚠ BARTScore indisponible : {e}")
 
@@ -531,6 +550,19 @@ def route_results():
 def health():
     return {"status": "ok", "running": state["running"], "done": state["done"]}
 
+import os
+from fastapi import Request
+
+@app.post("/save_pdf")
+async def save_pdf(request: Request):
+    pdf_bytes = await request.body()
+    import time
+    filename = f"eval_report_{int(time.time())}.pdf"
+    filepath = os.path.join(os.path.dirname(__file__), filename)
+    with open(filepath, "wb") as f:
+        f.write(pdf_bytes)
+    return {"status": "ok", "filename": filename}
+
 import subprocess
 @app.get("/models")
 def get_models():
@@ -551,6 +583,7 @@ HTML = r"""<!DOCTYPE html>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>EvalSuite — Résumés MultiEURLEX</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet"/>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -832,6 +865,9 @@ async function fetchAndRender(){
   _data = await r.json();
   render(_data);
   document.getElementById('btn-run').disabled = false;
+  
+  // Sauvegarde automatique du PDF après l'affichage des résultats
+  setTimeout(() => exportPDF(), 1000);
 }
 
 const pct = v => (v*100).toFixed(1)+'%';
@@ -954,7 +990,7 @@ function mkChart(id, arr, label, color){
   _charts[id] = new Chart(document.getElementById(id).getContext('2d'),{
     type:'bar',
     data:{labels,datasets:[{label,data:counts,backgroundColor:color+'bb',borderColor:color,borderWidth:1,borderRadius:3}]},
-    options:{responsive:true,maintainAspectRatio:false,
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false}},
       scales:{x:{ticks:{font:{size:9},maxRotation:45,autoSkip:false},grid:{display:false}},
               y:{ticks:{font:{size:9}},grid:{color:'rgba(0,0,0,.05)'}}}}
@@ -1003,7 +1039,7 @@ function renderDetail(){
   _charts['sc-rb'] = new Chart(document.getElementById('sc-rb').getContext('2d'),{
     type:'scatter',
     data:{datasets:[{label:'Documents',data:paired,backgroundColor:'#d4410b88',pointRadius:3}]},
-    options:{responsive:true,maintainAspectRatio:false,
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
       plugins:{legend:{display:false}},
       scales:{x:{title:{display:true,text:'ROUGE-1 F1',font:{size:10}},ticks:{font:{size:9}}},
               y:{title:{display:true,text:'BERTScore F1',font:{size:10}},ticks:{font:{size:9}}}}}
@@ -1018,11 +1054,51 @@ function exportJSON(){
   a.click();
 }
 
-function exportPDF(){
-  // Force l'ouverture des détails pour qu'ils soient dans le PDF
+async function exportPDF(){
   if(!_detOpen) toggleDetail();
-  // Petit délai pour laisser les graphiques s'afficher correctement avant d'imprimer
-  setTimeout(() => window.print(), 500);
+  
+  await new Promise(r => setTimeout(r, 500));
+  
+  const actions = document.querySelector('.actions');
+  const nav = document.querySelector('nav');
+  const hero = document.querySelector('.hero');
+  
+  actions.style.display = 'none';
+  nav.style.display = 'none';
+  hero.style.display = 'none';
+
+  const element = document.body;
+  const opt = {
+    margin:       10,
+    filename:     'eval_results.pdf',
+    image:        { type: 'jpeg', quality: 0.98 },
+    html2canvas:  { scale: 2 },
+    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+  };
+  
+  try {
+    const pdfBlob = await html2pdf().set(opt).from(element).output('blob');
+    
+    actions.style.display = 'flex';
+    nav.style.display = 'flex';
+    hero.style.display = 'block';
+
+    const res = await fetch('/save_pdf', { 
+        method: 'POST', 
+        headers: {'Content-Type': 'application/pdf'},
+        body: pdfBlob 
+    });
+    if(res.ok) {
+       console.log('PDF sauvegardé automatiquement sur le serveur.');
+    } else {
+       showErr('Erreur lors de la sauvegarde du PDF sur le serveur.');
+    }
+  } catch(e) {
+    actions.style.display = 'flex';
+    nav.style.display = 'flex';
+    hero.style.display = 'block';
+    showErr('Erreur html2pdf: ' + e);
+  }
 }
 </script>
 </body>
