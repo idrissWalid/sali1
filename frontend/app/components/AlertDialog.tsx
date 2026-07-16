@@ -13,7 +13,7 @@ const AlertDialogOverlay = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof AlertDialogPrimitive.Overlay>
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Overlay
-    className={cn('fixed inset-0 z-[999] bg-black/50 backdrop-blur-sm transition-opacity duration-200', className)}
+    className={cn('fixed inset-0 z-[999] bg-black/65 backdrop-blur-[3px] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0', className)}
     {...props}
     ref={ref}
   />
@@ -28,9 +28,9 @@ const AlertDialogContent = React.forwardRef<
     <AlertDialogOverlay />
     <AlertDialogPrimitive.Content
       ref={ref}
-      style={{ background: "var(--bg-panel)", border: "1px solid var(--border-color)", color: "var(--text-main)", ...style }}
+      style={{ background: "color-mix(in srgb, var(--bg-panel) 96%, var(--bg-app))", border: "1px solid color-mix(in srgb, var(--border-color) 86%, white 14%)", color: "var(--text-main)", ...style }}
       className={cn(
-        'fixed left-[50%] top-[50%] z-[1000] grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-2xl p-8 sm:p-10 shadow-2xl duration-200',
+        'fixed left-1/2 top-1/2 z-[1000] flex w-[calc(100%-2rem)] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-0 overflow-hidden rounded-[22px] p-5 shadow-[0_24px_80px_rgba(0,0,0,.42),0_1px_0_rgba(255,255,255,.04)_inset] outline-none sm:w-full sm:p-7 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
         className
       )}
       {...props}

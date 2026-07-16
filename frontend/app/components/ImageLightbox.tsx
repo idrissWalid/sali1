@@ -12,11 +12,12 @@ export default function ImageLightbox({ src, onClose }: Props) {
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
 
-  // Reset states when a new image is opened
-  useEffect(() => {
+  const [prevSrc, setPrevSrc] = useState<string | null>(src);
+  if (src !== prevSrc) {
     setScale(1);
     setPosition({ x: 0, y: 0 });
-  }, [src]);
+    setPrevSrc(src);
+  }
 
   // Handle escape key to close
   useEffect(() => {

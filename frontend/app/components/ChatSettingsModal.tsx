@@ -21,7 +21,7 @@ export default function ChatSettingsModal({ isOpen, onClose }: ChatSettingsModal
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <label style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-muted)" }}>
-              Vitesse de frappe de l'IA ({typingSpeed} ms)
+              {"Vitesse de frappe de l'IA ("}{typingSpeed}{" ms)"}
             </label>
             <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>
               Délai par caractère
@@ -41,7 +41,7 @@ export default function ChatSettingsModal({ isOpen, onClose }: ChatSettingsModal
         {/* System Prompt Customization */}
         <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
           <label style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-muted)" }}>
-            Instructions système de l'IA
+            {"Instructions système de l'IA"}
           </label>
           <textarea
             value={systemPrompt}

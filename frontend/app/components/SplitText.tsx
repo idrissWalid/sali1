@@ -41,7 +41,12 @@ const SplitText = ({
   const ref = useRef<HTMLParagraphElement | HTMLHeadingElement | HTMLSpanElement | HTMLDivElement | null>(null);
   const animationCompletedRef = useRef(false);
   const onCompleteRef = useRef(onLetterAnimationComplete);
-  const [fontsLoaded, setFontsLoaded] = useState(false);
+  const [fontsLoaded, setFontsLoaded] = useState(() => {
+    if (typeof document !== 'undefined') {
+      return document.fonts.status === 'loaded';
+    }
+    return false;
+  });
 
   // Keep callback ref updated
   useEffect(() => {
@@ -54,14 +59,10 @@ const SplitText = ({
   }, [text]);
 
   useEffect(() => {
-    if (typeof document !== 'undefined') {
-      if (document.fonts.status === 'loaded') {
+    if (typeof document !== 'undefined' && document.fonts.status !== 'loaded') {
+      document.fonts.ready.then(() => {
         setFontsLoaded(true);
-      } else {
-        document.fonts.ready.then(() => {
-          setFontsLoaded(true);
-        });
-      }
+      });
     }
   }, []);
 
@@ -84,7 +85,7 @@ const SplitText = ({
             : `+=${marginValue}${marginUnit}`;
       const start = `top ${startPct}%${sign}`;
 
-      let targets: any[] = [];
+      let targets: Element[] = [];
       if (splitType.includes('chars')) {
         targets = gsap.utils.toArray(el.querySelectorAll('.split-char'));
       } else if (splitType.includes('words')) {
@@ -188,7 +189,7 @@ const SplitText = ({
   const classes = `split-parent ${className}`;
 
   return (
-    <Tag ref={ref as any} style={style} className={classes}>
+    <Tag ref={ref as React.Ref<HTMLParagraphElement>} style={style} className={classes}>
       {renderContent()}
     </Tag>
   );

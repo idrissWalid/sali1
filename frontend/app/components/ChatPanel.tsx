@@ -1,14 +1,16 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
+import type { CSSProperties, JSX, ReactNode } from "react";
 import TextType from "./TextType";
 import ChatSettingsModal from "./ChatSettingsModal";
-import ModelsModal from "./ModelsModal";
 import ChatMoreMenu from "./ChatMoreMenu";
 import ImageLightbox from "./ImageLightbox";
 import { ImageZoom, Image } from "./ImageZoom";
 import Modal from "./Modal";
-import { SmoothInput } from "./SmoothInput";
- 
+import { PlaceholdersAndVanishInput } from "./PlaceholdersAndVanishInput";
+import WelcomePanel from "./WelcomePanel";
+import { Bot, FileText, MoreVertical, Settings2 } from "lucide-react";
+
 interface Message {
   role: "user" | "assistant";
   text: string;
@@ -16,16 +18,18 @@ interface Message {
   isSummary?: boolean;
   sources?: { page: number; text: string }[];
 }
- 
+
 interface Props {
   sessionId: string | null;
   sourceCount: number;
   initialMessage: Message | null;
   selectedModel?: string;
+  onUploadClick?: () => void;
+  onAssistantMessage?: (text: string) => void;
 }
- 
+
 // Helper pour parser le gras et le code inline
-function renderInlineMarkdown(text: string): React.ReactNode[] {
+function renderInlineMarkdown(text: string): ReactNode[] {
   const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
   return parts.map((part, j) => {
     if (part.startsWith("**") && part.endsWith("**")) {
@@ -49,7 +53,7 @@ function renderInlineMarkdown(text: string): React.ReactNode[] {
 }
 
 // ── Rendu markdown amélioré ──────────────────────────────────
-function renderMarkdown(text: string, onPropositionClick?: (text: string) => void): React.ReactNode[] {
+function renderMarkdown(text: string, onPropositionClick?: (text: string) => void): ReactNode[] {
   const lines = text.split("\n");
   let inPropositions = false;
 
@@ -75,9 +79,9 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
     }
 
     if (isHeader) {
-      const HeaderTag = `h${level}` as any;
+      const HeaderTag = `h${level}` as keyof JSX.IntrinsicElements;
       const upperContent = content.toUpperCase();
-      
+
       if (
         upperContent.includes("PROPOSITION") ||
         upperContent.includes("SUGGESTION") ||
@@ -91,7 +95,7 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
         inPropositions = false;
       }
 
-      const style: React.CSSProperties = {
+      const style: CSSProperties = {
         margin: level === 1 ? "18px 0 10px" : level === 2 ? "16px 0 8px" : "12px 0 6px",
         fontWeight: 600,
         fontSize: level === 1 ? "18px" : level === 2 ? "16px" : level === 3 ? "14px" : "13px",
@@ -184,12 +188,12 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
   });
 }
 // ─────────────────────────────────────────────────────────────
- 
-export default function ChatPanel({ sessionId, sourceCount, initialMessage, selectedModel }: Props) {
+
+export default function ChatPanel({ sessionId, sourceCount, initialMessage, selectedModel, onUploadClick, onAssistantMessage }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const latestInput = useRef("");
-  
+
   useEffect(() => {
     latestInput.current = input;
   }, [input]);
@@ -202,7 +206,6 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
 
   // State & Ref for Chat settings and options dropdown
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isModelsOpen, setIsModelsOpen] = useState(false);
   const [isMoreMenuOpen, setIsMoreMenuOpen] = useState(false);
   const moreMenuRef = useRef<HTMLButtonElement>(null);
 
@@ -254,10 +257,10 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           if (data.text) {
             const currentInput = latestInput.current;
             const finalMessage = currentInput.trim() ? `${currentInput} ${data.text}` : data.text;
-            
+
             // Clear input directly
             setInput("");
-            
+
             // Send message automatically
             await sendMessage(finalMessage);
           }
@@ -266,7 +269,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           alert("Erreur lors de la transcription vocale.");
           setLoading(false);
         }
-        
+
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
       };
@@ -278,11 +281,11 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       alert("Impossible d'accéder au microphone.");
     }
   };
- 
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
- 
+
   // Ajout du message initial une seule fois par session
   useEffect(() => {
     if (initialMessage && !initialMessageAdded.current) {
@@ -290,40 +293,50 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       setMessages([initialMessage]);
     }
   }, [initialMessage]);
- 
-  // Charger l'historique ou reset quand sessionId change (nouvelle session)
-  useEffect(() => {
+
+  const [prevSessionId, setPrevSessionId] = useState<string | null>(sessionId);
+  if (sessionId !== prevSessionId) {
+    setPrevSessionId(sessionId);
     if (!sessionId) {
       setMessages([]);
       setTypingDone(new Set());
+    }
+  }
+
+  useEffect(() => {
+    if (!sessionId) {
       initialMessageAdded.current = false;
-    } else {
-      const fetchHistory = async () => {
-        try {
-          setLoading(true);
-          const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-          const res = await fetch(`${apiUrl}/api/sessions/${sessionId}`);
-          if (!res.ok) throw new Error("Erreur serveur");
-          const data = await res.json();
-          
-          if (data && data.messages) {
-            setMessages(data.messages);
-            
-            // Marquer les anciens messages comme tapés pour éviter l'animation d'écriture
-            const doneSet = new Set<number>();
-            data.messages.forEach((_: any, idx: number) => doneSet.add(idx));
-            setTypingDone(doneSet);
-          }
-        } catch (err) {
-          console.error("Erreur lors du chargement de l'historique:", err);
-        } finally {
-          setLoading(false);
-        }
-      };
-      fetchHistory();
     }
   }, [sessionId]);
- 
+
+  // Charger l'historique ou reset quand sessionId change (nouvelle session)
+  useEffect(() => {
+    if (!sessionId) return;
+    const fetchHistory = async () => {
+      try {
+        setLoading(true);
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const res = await fetch(`${apiUrl}/api/sessions/${sessionId}`);
+        if (!res.ok) throw new Error("Erreur serveur");
+        const data = await res.json();
+
+        if (data && data.messages) {
+          setMessages(data.messages);
+
+          // Marquer les anciens messages comme tapés pour éviter l'animation d'écriture
+          const doneSet = new Set<number>();
+          data.messages.forEach((_: Message, idx: number) => doneSet.add(idx));
+          setTypingDone(doneSet);
+        }
+      } catch (err) {
+        console.error("Erreur lors du chargement de l'historique:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchHistory();
+  }, [sessionId]);
+
   const sendMessage = async (text: string) => {
     if (!text || !sessionId || loading) return;
     setMessages(m => [...m, { role: "user", text }]);
@@ -336,12 +349,14 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         body: JSON.stringify({ session_id: sessionId, message: text, model: selectedModel }),
       });
       const data = await res.json();
+      const textResponse = data.response;
       setMessages(m => [...m, {
         role: "assistant",
-        text: data.response,
+        text: textResponse,
         images: data.images || [],
         sources: data.sources || [],
       }]);
+      onAssistantMessage?.(textResponse);
     } catch {
       setMessages(m => [...m, { role: "assistant", text: "Erreur de connexion au serveur." }]);
     }
@@ -354,12 +369,20 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     setInput("");
     await sendMessage(userMsg);
   };
- 
+
+  const CHAT_PLACEHOLDERS = [
+    "Posez votre question sur vos données...",
+    "Quelles sont les tendances principales ?",
+    "Résume ce document en 3 points clés.",
+    "Compare les colonnes A et B...",
+    "Génère un graphique de la distribution.",
+    "Quelles anomalies détectes-tu ?",
+  ];
+
   return (
     <div style={{
       flex: 1,
-      height: "98%",
-      marginTop: "10px",
+      height: "100%",
       display: "flex",
       flexDirection: "column",
       overflow: "hidden",
@@ -368,7 +391,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       border: "1px solid var(--border-color)",
       borderBottom: "none",
     }}>
- 
+
       {/* Header */}
       <div style={{
         display: "flex",
@@ -382,22 +405,8 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         <span style={{ fontFamily: "'Google Sans',sans-serif", fontSize: "16px", fontWeight: 500, color: "var(--text-main)" }}>
           Discussion
         </span>
-        <div style={{ display: "flex", gap: "4px" }}>
-          <button
-            onClick={() => setIsModelsOpen(true)}
-            style={{
-              width: "36px", height: "36px", borderRadius: "50%",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "var(--text-muted)", fontSize: "16px", cursor: "pointer",
-              border: "none", background: "transparent",
-              transition: "background 0.2s",
-            }}
-            onMouseEnter={e => e.currentTarget.style.background = "var(--bubble-ai)"}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-            title="Modèles entraînés"
-          >
-            🚀
-          </button>
+
+        <div style={{ display: "flex", gap: "8px" }}>
           <button
             onClick={() => setIsSettingsOpen(true)}
             style={{
@@ -410,7 +419,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
             onMouseEnter={e => e.currentTarget.style.background = "var(--bubble-ai)"}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}
           >
-            ⚙
+            <Settings2 size={17} strokeWidth={1.8} />
           </button>
           <button
             ref={moreMenuRef}
@@ -425,55 +434,67 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
             onMouseEnter={e => e.currentTarget.style.background = "var(--bubble-ai)"}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}
           >
-            ⋮
+            <MoreVertical size={18} strokeWidth={1.8} />
           </button>
         </div>
- 
-        {/* More Menu Dropdown Overlay */}
-        <ChatMoreMenu
-          isOpen={isMoreMenuOpen}
-          onClose={() => setIsMoreMenuOpen(false)}
+      </div>
+
+      {/* More Menu Dropdown Overlay */}
+      <ChatMoreMenu
+        isOpen={isMoreMenuOpen}
+        onClose={() => setIsMoreMenuOpen(false)}
           anchorRef={moreMenuRef}
           messages={messages}
-          onClearChat={clearChat}
-        />
-      </div>
- 
+        onClearChat={clearChat}
+      />
+
       {/* Zone messages + input flottant */}
       <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", overflow: "hidden" }}>
- 
+
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "24px", paddingBottom: "130px" }}>
- 
-          {messages.length === 0 && (
-            <div style={{ textAlign: "center", color: "var(--text-dim)", fontSize: "14px", marginTop: "60px" }}>
-              Chargez une source et posez votre première question.
+        <div
+          className={messages.length === 0 ? "chat-messages chat-messages--empty" : "chat-messages"}
+          style={{ flex: 1, overflowY: "auto", padding: "24px", paddingBottom: "90px", minHeight: 0 }}
+        >
+
+          {messages.length === 0 && sourceCount === 0 && (
+            <WelcomePanel onUpload={() => onUploadClick?.()} />
+          )}
+
+          {messages.length === 0 && sourceCount > 0 && (
+            <div className="chat-empty-message">
+              Votre source est prête. Posez votre première question.
             </div>
           )}
- 
+
           {messages.map((msg, i) => (
             <div key={i} style={{
               display: "flex",
               justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-              marginBottom: "22px",
+              marginBottom: "24px",
+              animation: "msgFadeIn 0.25s ease-out both",
             }}>
               {msg.role === "assistant" && (
                 <div style={{
-                  width: "32px", height: "32px", borderRadius: "50%",
-                  background: "linear-gradient(135deg,#8ab4f8,#c58af9)",
+                  width: "30px", height: "30px", borderRadius: "50%",
+                  background: "linear-gradient(135deg,#8ab4f8,#a78bfa)",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: "14px", flexShrink: 0, marginRight: "12px", marginTop: "2px",
-                }}>✦</div>
+                  fontSize: "13px", flexShrink: 0, marginRight: "10px", marginTop: "4px",
+                  boxShadow: "0 2px 10px rgba(138,180,248,0.3)",
+                }}><Bot size={15} strokeWidth={1.9} /></div>
               )}
               <div style={{
                 maxWidth: "75%",
                 fontSize: "14px",
-                lineHeight: 1.7,
+                lineHeight: 1.75,
                 color: "var(--text-main)",
-                padding: "14px 18px",
-                borderRadius: msg.role === "user" ? "18px 0 18px 18px" : "0 18px 18px 18px",
-                background: msg.role === "user" ? "var(--bubble-user)" : "var(--bubble-ai)",
-                border: `1px solid ${msg.role === "user" ? "rgba(138,180,248,0.2)" : "var(--border-muted)"}`,
+                padding: "13px 17px",
+                borderRadius: msg.role === "user" ? "20px 4px 20px 20px" : "4px 20px 20px 20px",
+                background: msg.role === "user"
+                  ? "linear-gradient(135deg, rgba(138,180,248,0.18), rgba(167,139,250,0.12))"
+                  : "var(--bubble-ai)",
+                border: `1px solid ${msg.role === "user" ? "rgba(138,180,248,0.28)" : "var(--border-muted)"}`,
+                boxShadow: msg.role === "user" ? "0 2px 12px rgba(138,180,248,0.1)" : "none",
               }}>
                 {msg.role === "assistant" ? (
                   typingDone.has(i) ? (
@@ -553,7 +574,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                                   e.currentTarget.style.background = "var(--bg-panel)";
                                 }}
                               >
-                                📄 Page {src.page}
+                                <FileText size={13} strokeWidth={1.8} /> Page {src.page}
                               </button>
                             ))}
                           </div>
@@ -577,7 +598,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                 ) : (
                   msg.text
                 )}
- 
+
                 {/* Images générées par la sandbox */}
                 {msg.images && msg.images.length > 0 && (
                   <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -601,124 +622,216 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
               </div>
             </div>
           ))}
- 
+
           {loading && (
-            <div style={{ display: "flex", marginBottom: "22px" }}>
+            <div style={{ display: "flex", marginBottom: "24px", animation: "msgFadeIn 0.25s ease-out both" }}>
               <div style={{
-                width: "32px", height: "32px", borderRadius: "50%",
-                background: "linear-gradient(135deg,#8ab4f8,#c58af9)",
+                width: "30px", height: "30px", borderRadius: "50%",
+                background: "linear-gradient(135deg,#8ab4f8,#a78bfa)",
                 display: "flex", alignItems: "center", justifyContent: "center",
-                marginRight: "12px", flexShrink: 0,
-              }}>✦</div>
+                marginRight: "10px", flexShrink: 0,
+                boxShadow: "0 2px 10px rgba(138,180,248,0.3)",
+              }}><Bot size={15} strokeWidth={1.9} /></div>
               <div style={{
                 padding: "14px 18px",
                 background: "var(--bubble-ai)",
                 border: "1px solid var(--border-muted)",
-                borderRadius: "0 18px 18px 18px",
-                color: "var(--text-muted)", fontSize: "14px",
+                borderRadius: "4px 20px 20px 20px",
+                display: "flex", alignItems: "center", gap: "6px",
               }}>
-                Analyse en cours...
+                <style>{`
+                  @keyframes msgFadeIn {
+                    from { opacity: 0; transform: translateY(8px); }
+                    to   { opacity: 1; transform: translateY(0); }
+                  }
+                  @keyframes chat-dot-bounce {
+                    0%, 80%, 100% { transform: scale(0.7); opacity: 0.4; }
+                    40%           { transform: scale(1.1); opacity: 1; }
+                  }
+                  .chat-dot {
+                    width: 7px; height: 7px; border-radius: 50%;
+                    animation: chat-dot-bounce 1.2s ease-in-out infinite;
+                  }
+                `}</style>
+                <span className="chat-dot" style={{ background: "#8ab4f8", animationDelay: "0s" }} />
+                <span className="chat-dot" style={{ background: "#a78bfa", animationDelay: "0.2s" }} />
+                <span className="chat-dot" style={{ background: "#c58af9", animationDelay: "0.4s" }} />
               </div>
             </div>
           )}
- 
+
           <div ref={bottomRef} />
         </div>
- 
-        {/* Input flottant */}
+
+        {/* Input flottant — Zone saisie premium */}
         <div style={{
           position: "absolute",
-          bottom: "16px",
-          left: "5%",
-          right: "5%",
+          bottom: "6px",
+          left: "2%",
+          right: "2%",
         }}>
-          <div style={{
-            display: "flex",
-            alignItems: "flex-end",
-            gap: "12px",
-            background: "var(--input-bg)",
-            border: "1px solid var(--border-color)",
-            borderRadius: "24px",
-            padding: "12px 16px",
-            boxShadow: "0 4px 24px rgba(0,0,0,0.15)",
-          }}>
-            <SmoothInput
+          <style>{`
+            @keyframes chat-pulse-ring {
+              0% { transform: scale(1); opacity: 0.9; }
+              70% { transform: scale(1.55); opacity: 0; }
+              100% { transform: scale(1.55); opacity: 0; }
+            }
+            .chat-input-bar {
+              display: flex;
+              align-items: center;
+              min-height: 64px;
+              gap: 8px;
+              background: color-mix(in srgb, var(--input-bg) 85%, transparent);
+              border: 1px solid rgba(255,255,255,0.1);
+              border-radius: 28px;
+              padding: 8px 10px 8px 24px;
+              box-shadow: 0 8px 32px rgba(0,0,0,0.28), 0 1px 0 rgba(255,255,255,0.04) inset;
+              backdrop-filter: blur(16px);
+              transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            }
+            .chat-input-bar:focus-within {
+              border-color: rgba(138,180,248,0.35);
+              box-shadow: 0 8px 40px rgba(0,0,0,0.3), 0 0 0 3px rgba(138,180,248,0.08), 0 1px 0 rgba(255,255,255,0.05) inset;
+            }
+            .chat-source-chip {
+              display: inline-flex;
+              align-items: center;
+              gap: 5px;
+              min-height: 40px;
+              padding: 0 12px;
+              border-radius: 20px;
+              border: 1px solid rgba(138,180,248,0.25);
+              background: rgba(138,180,248,0.1);
+              color: #8ab4f8;
+              font-size: 11.5px;
+              font-weight: 600;
+              flex-shrink: 0;
+              justify-content: center;
+              letter-spacing: 0.01em;
+              transition: background 0.2s, border-color 0.2s;
+            }
+            .chat-source-chip:hover {
+              background: rgba(138,180,248,0.16);
+              border-color: rgba(138,180,248,0.45);
+            }
+            .chat-btn-mic {
+              width: 42px; height: 42px;
+              border-radius: 50%;
+              border: 1px solid var(--border-color);
+              background: color-mix(in srgb, var(--bg-panel) 80%, transparent);
+              color: var(--text-muted);
+              display: flex; align-items: center; justify-content: center;
+              cursor: pointer;
+              flex-shrink: 0;
+              position: relative;
+              transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.15s;
+            }
+            .chat-btn-mic:hover:not(:disabled) {
+              color: var(--text-main);
+              background: var(--bubble-ai);
+              border-color: rgba(255,255,255,0.15);
+              transform: scale(1.06);
+            }
+            .chat-btn-mic--recording {
+              background: rgba(239, 68, 68, 0.15) !important;
+              border-color: rgba(239, 68, 68, 0.4) !important;
+              color: #ef4444 !important;
+            }
+            .chat-btn-mic--recording::before {
+              content: '';
+              position: absolute;
+              inset: 0;
+              border-radius: 50%;
+              background: rgba(239,68,68,0.35);
+              animation: chat-pulse-ring 1.4s ease-out infinite;
+            }
+            .chat-btn-send {
+              width: 42px; height: 42px;
+              border-radius: 50%;
+              border: none;
+              background: linear-gradient(135deg, #8ab4f8, #a78bfa);
+              color: #fff;
+              display: flex; align-items: center; justify-content: center;
+              cursor: pointer;
+              flex-shrink: 0;
+              box-shadow: 0 4px 14px rgba(138,180,248,0.35);
+              transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
+            }
+            .chat-btn-send:hover:not(:disabled) {
+              transform: scale(1.08) translateY(-1px);
+              box-shadow: 0 6px 20px rgba(138,180,248,0.5);
+            }
+            .chat-btn-send:active:not(:disabled) {
+              transform: scale(0.95);
+            }
+            .chat-btn-send:disabled {
+              background: var(--bubble-ai);
+              color: var(--text-dim);
+              box-shadow: none;
+              cursor: not-allowed;
+            }
+          `}</style>
+          <div className="chat-input-bar">
+            <PlaceholdersAndVanishInput
+              placeholders={CHAT_PLACEHOLDERS}
               value={input}
               onChange={e => setInput(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-              placeholder="Commencez à écrire..."
-              wrapperClassName="flex-1 [&>div]:focus-within:outline-none"
-              className="text-sm placeholder:text-[var(--text-muted)]"
-              style={{
-                background: "transparent",
-                color: "var(--text-main)",
+              onSubmit={() => {
+                const userMsg = input.trim();
+                if (!userMsg || !sessionId || loading) return;
+                setInput("");
+                sendMessage(userMsg);
               }}
+              disabled={!sessionId || loading}
             />
-            <span style={{
-              fontSize: "12px", color: "var(--text-muted)",
-              padding: "4px 10px",
-              background: "var(--bubble-ai)",
-              borderRadius: "12px",
-              flexShrink: 0,
-              alignSelf: "flex-end",
-              marginBottom: "2px",
-            }}>
+
+            {/* Source chip */}
+            <span className="chat-source-chip">
+              <svg width="11" height="11" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z" />
+                <path d="M14 2v6h6" />
+              </svg>
               {sourceCount} source{sourceCount !== 1 ? "s" : ""}
             </span>
+
+            {/* Mic button */}
             <button
               onClick={toggleRecording}
               disabled={loading}
               title={isRecording ? "Arrêter l'enregistrement" : "Saisie vocale"}
-              style={{
-                width: "36px", height: "36px", borderRadius: "50%",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: "18px", flexShrink: 0,
-                cursor: loading ? "not-allowed" : "pointer",
-                background: isRecording ? "rgba(234, 67, 53, 0.15)" : "transparent",
-                color: isRecording ? "#ea4335" : "var(--text-muted)",
-                border: "none", transition: "all .2s",
-                position: "relative",
-              }}
-              onMouseEnter={e => { if (!isRecording && !loading) e.currentTarget.style.background = "var(--bubble-ai)"; }}
-              onMouseLeave={e => { if (!isRecording && !loading) e.currentTarget.style.background = "transparent"; }}
+              className={`chat-btn-mic${isRecording ? " chat-btn-mic--recording" : ""}`}
             >
               {isRecording ? (
-                <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24">
                   <rect x="6" y="6" width="12" height="12" rx="2" />
                 </svg>
               ) : (
-                <svg width="20" height="20" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M8 22h8"></path>
-                  <path d="M12 14a3 3 0 0 1-3-3V5a3 3 0 1 1 6 0v6a3 3 0 0 1-3 3Z"></path>
-                  <path d="M19 11a7 7 0 1 1-14 0"></path>
-                  <path d="M12 18v4"></path>
+                <svg width="17" height="17" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24">
+                  <path d="M8 22h8" /><path d="M12 14a3 3 0 0 1-3-3V5a3 3 0 1 1 6 0v6a3 3 0 0 1-3 3Z" />
+                  <path d="M19 11a7 7 0 1 1-14 0" /><path d="M12 18v4" />
                 </svg>
               )}
             </button>
+
+            {/* Send button */}
             <button
               onClick={send}
               disabled={!input.trim() || !sessionId || loading}
-              style={{
-                width: "36px", height: "36px", borderRadius: "50%",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: "18px", flexShrink: 0,
-                cursor: input.trim() && sessionId ? "pointer" : "not-allowed",
-                background: input.trim() && sessionId ? "var(--accent-color)" : "var(--bubble-ai)",
-                color: input.trim() && sessionId ? "var(--bg-app)" : "var(--text-dim)",
-                border: "none", transition: "all .2s",
-              }}
-            >→</button>
+              className="chat-btn-send"
+            >
+              <svg width="18" height="18" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" viewBox="0 0 24 24">
+                <path d="M22 2 11 13" /><path d="m22 2-7 20-4-9-9-4 20-7Z" />
+              </svg>
+            </button>
           </div>
         </div>
- 
+
       </div>
- 
+
+
       {/* Chat Settings Modal */}
       <ChatSettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
-      {/* Models Modal */}
-      <ModelsModal isOpen={isModelsOpen} onClose={() => setIsModelsOpen(false)} sessionId={sessionId} />
- 
       {/* Lightbox pour les images */}
       <ImageLightbox src={lightboxImage} onClose={() => setLightboxImage(null)} />
 

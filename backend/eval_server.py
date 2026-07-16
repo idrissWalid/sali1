@@ -574,9 +574,15 @@ def get_models():
         result = subprocess.run(["ollama", "list"], capture_output=True, text=True, check=True)
         lines = result.stdout.strip().split('\n')[1:] # Skip header
         models = [line.split()[0] for line in lines if line]
-        return {"models": ["gemini-3.1-flash-lite-preview"] + models}
+        return {
+            "models": models,
+            "proprietary": ["gemini-3.1-flash-lite-preview"]
+        }
     except Exception as e:
-        return {"models": ["gemini-3.1-flash-lite-preview"]}
+        return {
+            "models": [],
+            "proprietary": ["gemini-3.1-flash-lite-preview"]
+        }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  UI HTML (intégrée dans le même fichier)
@@ -767,11 +773,28 @@ window.addEventListener('DOMContentLoaded', async () => {
     const res = await fetch('/models');
     const data = await res.json();
     const sel = document.getElementById('cfg-model');
-    data.models.forEach(m => {
-      const opt = document.createElement('option');
-      opt.value = m; opt.textContent = m;
-      sel.appendChild(opt);
-    });
+    
+    if (data.models && data.models.length > 0) {
+      const optGroupLocal = document.createElement('optgroup');
+      optGroupLocal.label = "Modèles Locaux (Ollama)";
+      data.models.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m; opt.textContent = m;
+        optGroupLocal.appendChild(opt);
+      });
+      sel.appendChild(optGroupLocal);
+    }
+    
+    if (data.proprietary && data.proprietary.length > 0) {
+      const optGroupProp = document.createElement('optgroup');
+      optGroupProp.label = "Modèles Propriétaires";
+      data.proprietary.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m; opt.textContent = m;
+        optGroupProp.appendChild(opt);
+      });
+      sel.appendChild(optGroupProp);
+    }
   } catch(e) {}
 });
 

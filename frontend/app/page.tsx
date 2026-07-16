@@ -1,16 +1,20 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import Image from "next/image";
+import { Moon, Plus, Settings2, Share2, Sun } from "lucide-react";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import Sidebar from "./components/Sidebar";
 import SourcesPanel from "./components/SourcesPanel";
 import ChatPanel from "./components/ChatPanel";
 import StudioPanel from "./components/StudioPanel";
 import SettingsModal from "./components/SettingsModal";
+import ModelsModal from "./components/ModelsModal";
 import ShareModal from "./components/ShareModal";
 import AvatarMenu from "./components/AvatarMenu";
 import Modal from "./components/Modal";
-import GlareHover from "./components/GlareHover";
+import SourceHistoryDock from "./components/SourceHistoryDock";
 
 interface Source {
   name: string;
@@ -26,6 +30,17 @@ interface SessionItem {
   created_at: string;
 }
 
+interface UploadData {
+  session_id: string;
+  filename?: string;
+  profile?: {
+    filename?: string;
+  };
+  type: string;
+  interpretation?: string;
+  summary?: string;
+}
+
 export default function Home() {
   const [sources, setSources] = useState<Source[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -33,15 +48,29 @@ export default function Home() {
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [leftTab, setLeftTab] = useState<"sources" | "history">("sources");
+  const [openUpload, setOpenUpload] = useState<(() => void) | null>(null);
+  
+  const registerUploadHandler = useCallback((handler: (() => void) | null) => {
+    setOpenUpload(() => handler);
+  }, []);
   
   const [models, setModels] = useState<string[]>(["gemma2:latest"]);
-  const [selectedModel, setSelectedModel] = useState<string>("gemma2:latest");
+  const [proprietaryModels, setProprietaryModels] = useState<string[]>(["gemini-3.1-flash-lite-preview"]);
+  const [selectedModel, setSelectedModel] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("selected_model") || "gemma2:latest";
+    }
+    return "gemma2:latest";
+  });
 
   // Modal & Dropdown visibility states
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isModelsOpen, setIsModelsOpen] = useState(false);
+  const [generatedContent, setGeneratedContent] = useState<string>("");
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
   const [isNewSessionConfirmOpen, setIsNewSessionConfirmOpen] = useState(false);
+  const [isPageLoading, setIsPageLoading] = useState(true);
 
   // Anchor ref for positioning avatar dropdown
   const avatarRef = useRef<HTMLDivElement>(null);
@@ -49,20 +78,6 @@ export default function Home() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
-
-  // Charger la liste des sessions au montage
-  useEffect(() => {
-    const savedModel = localStorage.getItem("selected_model");
-    if (savedModel) {
-      setSelectedModel(savedModel);
-    }
-    fetchSessions();
-    fetchModels();
-    const savedSessionId = localStorage.getItem("active_session_id");
-    if (savedSessionId) {
-      handleSelectSession(savedSessionId);
-    }
-  }, []);
 
   useEffect(() => {
     if (sessionId) {
@@ -88,13 +103,19 @@ export default function Home() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
       const res = await fetch(`${apiUrl}/api/llm-models`);
       const data = await res.json();
-      if (data.models && data.models.length > 0) {
+      if (data.models) {
         setModels(data.models);
+      }
+      if (data.proprietary) {
+        setProprietaryModels(data.proprietary);
+      }
+      const allModels = [...(data.models || []), ...(data.proprietary || [])];
+      if (allModels.length > 0) {
         const savedModel = localStorage.getItem("selected_model");
-        if (savedModel && data.models.includes(savedModel)) {
+        if (savedModel && allModels.includes(savedModel)) {
           setSelectedModel(savedModel);
         } else {
-          setSelectedModel(data.models[0]);
+          setSelectedModel(allModels[0]);
         }
       }
     } catch (err) {
@@ -102,11 +123,6 @@ export default function Home() {
     }
   };
 
-  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    setSelectedModel(val);
-    localStorage.setItem("selected_model", val);
-  };
 
   const handleSelectSession = async (id: string) => {
     try {
@@ -160,7 +176,7 @@ export default function Home() {
     }
   };
 
-  const handleUpload = (data: any) => {
+  const handleUpload = (data: UploadData) => {
     setSessionId(data.session_id);
     const newSource: Source = {
       name: data.filename || data.profile?.filename || "Source",
@@ -169,7 +185,7 @@ export default function Home() {
     };
     setSources(s => [...s, newSource]);
     setLeftTab("sources");
-    const text = data.type === "tabular_analyzed" ? data.interpretation : data.summary;
+    const text = data.type === "tabular_analyzed" ? (data.interpretation ?? "") : (data.summary ?? "");
     setInitialMessage({ role: "assistant", text, isSummary: data.type === "tabular_analyzed" });
     
     // Rafraîchir l'historique des sessions
@@ -186,44 +202,168 @@ export default function Home() {
     setInitialMessage(null);
   };
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const initializeApp = async () => {
+      try {
+        await Promise.all([fetchSessions(), fetchModels()]);
+        const savedSessionId = localStorage.getItem("active_session_id");
+        if (savedSessionId && isMounted) {
+          await handleSelectSession(savedSessionId);
+        }
+      } finally {
+        if (isMounted) {
+          setIsPageLoading(false);
+        }
+      }
+    };
+
+    initializeApp();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  if (isPageLoading) {
+    return (
+      <div className="frontend-loading-shell">
+        <div className="frontend-loading-header">
+          <div className="frontend-loading-block frontend-loading-block--avatar" />
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flex: 1 }}>
+            <div className="frontend-loading-block frontend-loading-block--line" style={{ width: "140px" }} />
+            <div className="frontend-loading-block frontend-loading-block--line" style={{ width: "92px" }} />
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <div className="frontend-loading-block frontend-loading-block--chip" />
+            <div className="frontend-loading-block frontend-loading-block--chip" />
+            <div className="frontend-loading-block frontend-loading-block--chip" />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", flex: 1, gap: "10px" }}>
+          <div className="frontend-loading-panel" style={{ width: "22%", padding: "16px" }}>
+            <div className="frontend-loading-block frontend-loading-block--line" style={{ width: "70%", marginBottom: "14px" }} />
+            <div className="frontend-loading-block frontend-loading-block--line" style={{ width: "100%", marginBottom: "10px" }} />
+            <div className="frontend-loading-block frontend-loading-block--line" style={{ width: "88%", marginBottom: "10px" }} />
+            <div className="frontend-loading-block frontend-loading-block--line" style={{ width: "60%" }} />
+          </div>
+
+          <div className="frontend-loading-panel frontend-loading-panel--wide" style={{ flex: 1, padding: "16px" }}>
+            <div className="frontend-loading-block frontend-loading-block--line" style={{ width: "34%", marginBottom: "16px" }} />
+            <div className="frontend-loading-block frontend-loading-block--card" style={{ height: "120px", marginBottom: "12px" }} />
+            <div className="frontend-loading-block frontend-loading-block--card" style={{ height: "70px" }} />
+          </div>
+
+          <div className="frontend-loading-panel" style={{ width: "23%", padding: "16px" }}>
+            <div className="frontend-loading-block frontend-loading-block--line" style={{ width: "64%", marginBottom: "14px" }} />
+            <div className="frontend-loading-block frontend-loading-block--card" style={{ height: "88px" }} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg-app)", color: "var(--text-main)", transition: "all 0.3s ease", overflow: "hidden" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg-app)", color: "var(--text-main)", transition: "background-color 0.3s ease, color 0.3s ease", overflow: "hidden" }}>
 
       {/* TOPBAR */}
-      <div style={{ height: "64px", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", background: "var(--bg-panel)", borderBottom: "1px solid var(--border-color)", flexShrink: 0, position: "relative" }}>
+      <div style={{
+        height: "60px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "0 20px",
+        background: "color-mix(in srgb, var(--bg-panel) 88%, transparent)",
+        borderBottom: "1px solid rgba(255,255,255,0.07)",
+        backdropFilter: "blur(12px)",
+        flexShrink: 0,
+        position: "relative",
+        zIndex: 10,
+      }}>
 
         {/* Gauche : logo + nom */}
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div style={{ width: "36px", height: "36px", borderRadius: "10px", overflow: "hidden", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <img
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div style={{
+            width: "34px", height: "34px",
+            borderRadius: "10px",
+            overflow: "hidden",
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "linear-gradient(135deg, rgba(138,180,248,0.15), rgba(167,139,250,0.1))",
+            border: "1px solid rgba(138,180,248,0.2)",
+          }}>
+            <Image
               src="/logo.png"
               alt="Logo"
-              width={36}
-              height={36}
-              style={{ objectFit: "contain" }}
+              width={32}
+              height={32}
+              style={{ objectFit: "contain", width: "auto", height: "auto" }}
             />
           </div>
-          <span style={{ fontFamily: "'Google Sans',sans-serif", fontSize: "18px", fontWeight: 500, color: "var(--text-main)" }}>
+          <span style={{
+            fontFamily: "'Google Sans',sans-serif",
+            fontSize: "16px",
+            fontWeight: 600,
+            color: "var(--text-main)",
+            letterSpacing: "-0.02em",
+          }}>
             No-Code Data Intelligence
           </span>
         </div>
 
         {/* Droite : boutons */}
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
           
           {/* Theme Toggle */}
           <button
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            style={{ width: "36px", height: "36px", borderRadius: "50%", border: "1px solid var(--border-color)", background: "transparent", color: "var(--text-main)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "18px" }}
+            onClick={(e) => {
+              const x = e.clientX;
+              const y = e.clientY;
+              const maxRadius = Math.hypot(
+                Math.max(x, window.innerWidth - x),
+                Math.max(y, window.innerHeight - y)
+              );
+              
+              document.documentElement.style.setProperty('--click-x', `${x}px`);
+              document.documentElement.style.setProperty('--click-y', `${y}px`);
+              document.documentElement.style.setProperty('--max-radius', `${maxRadius}px`);
+
+              const newTheme = theme === "dark" ? "light" : "dark";
+
+              if (!document.startViewTransition) {
+                setTheme(newTheme);
+                return;
+              }
+
+              document.startViewTransition(() => {
+                document.documentElement.setAttribute("data-theme", newTheme);
+                setTheme(newTheme);
+              });
+            }}
+            style={{
+              width: "34px", height: "34px",
+              borderRadius: "50%",
+              border: "1px solid var(--border-color)",
+              background: "transparent",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: "16px",
+              transition: "background 0.2s, color 0.2s, transform 0.2s",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = "var(--bubble-ai)"; e.currentTarget.style.transform = "rotate(20deg) scale(1.05)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "none"; }}
           >
-            {theme === "dark" ? "☀️" : "🌙"}
+            {theme === "dark" ? <Sun size={17} strokeWidth={1.8} /> : <Moon size={17} strokeWidth={1.8} />}
           </button>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             {[
-              {
-                label: "＋ Nouvelle session",
-                action: () => {
+              { label: "Nouvelle session", icon: Plus, action: () => {
                   if (sources.length > 0) {
                     setIsNewSessionConfirmOpen(true);
                   } else {
@@ -231,21 +371,63 @@ export default function Home() {
                   }
                 }
               },
-              { label: "↗ Partager", action: () => setIsShareOpen(true) },
-              { label: "⚙ Paramètres", action: () => setIsSettingsOpen(true) },
+              { label: "Partager", icon: Share2, action: () => setIsShareOpen(true) },
+              { label: "Paramètres", icon: Settings2, action: () => setIsSettingsOpen(true) },
             ].map((btn, i) => (
               <button key={i} onClick={btn.action}
-                style={{ display: "flex", alignItems: "center", gap: "8px", padding: "8px 18px", borderRadius: "24px", border: "1px solid var(--border-color)", color: "var(--text-main)", fontSize: "14px", fontFamily: "'Google Sans',sans-serif", background: "transparent", cursor: "pointer", transition: "background .15s" }}
-                onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = "var(--bubble-ai)"}
-                onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = "transparent"}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  padding: "7px 16px",
+                  borderRadius: "20px",
+                  border: "1px solid var(--border-color)",
+                  color: "var(--text-muted)",
+                  fontSize: "13px",
+                  fontFamily: "'Google Sans',sans-serif",
+                  background: "transparent",
+                  cursor: "pointer",
+                  transition: "background 0.15s, color 0.15s, border-color 0.15s, transform 0.12s",
+                  fontWeight: 500,
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = "var(--bubble-ai)";
+                  e.currentTarget.style.color = "var(--text-main)";
+                  e.currentTarget.style.borderColor = "rgba(255,255,255,0.14)";
+                  e.currentTarget.style.transform = "translateY(-1px)";
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.color = "var(--text-muted)";
+                  e.currentTarget.style.borderColor = "var(--border-color)";
+                  e.currentTarget.style.transform = "none";
+                }}
               >
+                <btn.icon size={15} strokeWidth={1.8} />
                 {btn.label}
               </button>
             ))}
             <div
               ref={avatarRef}
               onClick={() => setIsAvatarOpen(!isAvatarOpen)}
-              style={{ width: "36px", height: "36px", borderRadius: "50%", background: "linear-gradient(135deg,#8ab4f8,#c58af9)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", fontWeight: 500, color: "#fff", cursor: "pointer" }}
+              style={{
+                width: "34px", height: "34px",
+                borderRadius: "50%",
+                background: "linear-gradient(135deg,#8ab4f8,#a78bfa)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: "13px", fontWeight: 600, color: "#fff",
+                cursor: "pointer",
+                boxShadow: "0 2px 10px rgba(138,180,248,0.3)",
+                transition: "transform 0.15s, box-shadow 0.15s",
+              }}
+              onMouseEnter={e => {
+                (e.currentTarget as HTMLElement).style.transform = "scale(1.08)";
+                (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(138,180,248,0.45)";
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLElement).style.transform = "none";
+                (e.currentTarget as HTMLElement).style.boxShadow = "0 2px 10px rgba(138,180,248,0.3)";
+              }}
             >
               W
             </div>
@@ -258,12 +440,11 @@ export default function Home() {
       </div>
 
       {/* MAIN */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden", padding: "0 8px" }}>
-        <Group orientation="horizontal">
+      <div style={{ display: "flex", flex: 1, overflow: "hidden", padding: "10px 8px 0 8px" }}>
+        <Group orientation="horizontal" style={{ width: "100%", height: "100%" }}>
           <Panel defaultSize={22} minSize={15} style={{ height: "100%" }}>
             <div style={{
-              height: "98%",
-              marginTop: "10px",
+              height: "100%",
               display: "flex",
               flexDirection: "column",
               background: "var(--bg-panel)",
@@ -276,7 +457,14 @@ export default function Home() {
               {/* Tab Content */}
               <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
                 <div style={{ display: leftTab === "sources" ? "flex" : "none", height: "100%", flexDirection: "column" }}>
-                  <SourcesPanel sources={sources} onUpload={handleUpload} onRemove={handleRemove} hideHeader={true} selectedModel={selectedModel} />
+                  <SourcesPanel
+                    sources={sources}
+                    onUpload={handleUpload}
+                    onRemove={handleRemove}
+                    hideHeader={true}
+                    selectedModel={selectedModel}
+                    registerUploadHandler={registerUploadHandler}
+                  />
                 </div>
                 <div style={{ display: leftTab === "history" ? "flex" : "none", height: "100%", flexDirection: "column" }}>
                   <Sidebar
@@ -290,88 +478,29 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Bottom Tab Switcher */}
-              <div style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr",
-                gap: "8px",
-                padding: "12px",
-                borderTop: "1px solid var(--border-color)",
-                background: "var(--bg-panel)",
-              }}>
-                <GlareHover
-                  onClick={() => setLeftTab("sources")}
-                  background={leftTab === "sources" ? "var(--bubble-user)" : "var(--bubble-ai)"}
-                  borderColor={leftTab === "sources" ? "var(--accent-color)" : "var(--border-color)"}
-                  borderRadius="10px"
-                  glareOpacity={0.2}
-                  style={{
-                    padding: "10px",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "8px",
-                    transition: "all 0.2s",
-                  }}
-                  onMouseEnter={(e: React.MouseEvent) => { (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-user)'); }}
-                  onMouseLeave={(e: React.MouseEvent) => { (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', leftTab === "sources" ? "var(--bubble-user)" : "var(--bubble-ai)"); }}
-                >
-                  <span style={{ display: "flex", alignItems: "center", color: leftTab === "sources" ? "var(--text-main)" : "var(--text-muted)" }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                    </svg>
-                  </span>
-                  <span style={{ 
-                    fontSize: "13px", 
-                    fontWeight: 600, 
-                    color: leftTab === "sources" ? "var(--text-main)" : "var(--text-muted)" 
-                  }}>
-                    Fichiers ({sources.length})
-                  </span>
-                </GlareHover>
-
-                <GlareHover
-                  onClick={() => setLeftTab("history")}
-                  background={leftTab === "history" ? "var(--bubble-user)" : "var(--bubble-ai)"}
-                  borderColor={leftTab === "history" ? "var(--accent-color)" : "var(--border-color)"}
-                  borderRadius="10px"
-                  glareOpacity={0.2}
-                  style={{
-                    padding: "10px",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "8px",
-                    transition: "all 0.2s",
-                  }}
-                  onMouseEnter={(e: React.MouseEvent) => { (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-user)'); }}
-                  onMouseLeave={(e: React.MouseEvent) => { (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', leftTab === "history" ? "var(--bubble-user)" : "var(--bubble-ai)"); }}
-                >
-                  <span style={{ display: "flex", alignItems: "center", color: leftTab === "history" ? "var(--text-main)" : "var(--text-muted)" }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                    </svg>
-                  </span>
-                  <span style={{ 
-                    fontSize: "13px", 
-                    fontWeight: 600, 
-                    color: leftTab === "history" ? "var(--text-main)" : "var(--text-muted)" 
-                  }}>
-                    Historique
-                  </span>
-                </GlareHover>
+              <div className="source-history-dock-wrap">
+                <SourceHistoryDock
+                  activeTab={leftTab}
+                  sourceCount={sources.length}
+                  onTabChange={setLeftTab}
+                />
               </div>
             </div>
           </Panel>
           <Separator style={{ width: "8px", background: "transparent", cursor: "col-resize", transition: "background 0.2s" }} />
           <Panel defaultSize={55} minSize={30} style={{ height: "100%" }}>
-            <ChatPanel sessionId={sessionId} sourceCount={sources.length} initialMessage={initialMessage} selectedModel={selectedModel} />
+            <ChatPanel
+              sessionId={sessionId}
+              sourceCount={sources.length}
+              initialMessage={initialMessage}
+              selectedModel={selectedModel}
+              onUploadClick={() => openUpload?.()}
+              onAssistantMessage={(text) => setGeneratedContent(text)}
+            />
           </Panel>
           <Separator style={{ width: "8px", background: "transparent", cursor: "col-resize", transition: "background 0.2s" }} />
           <Panel defaultSize={23} minSize={15} style={{ height: "100%" }}>
-            <StudioPanel sessionId={sessionId} />
+            <StudioPanel sessionId={sessionId} generatedContent={generatedContent} openModels={() => setIsModelsOpen(true)} />
           </Panel>
         </Group>
       </div>
@@ -386,19 +515,21 @@ export default function Home() {
         isOpen={isSettingsOpen} 
         onClose={() => setIsSettingsOpen(false)} 
         models={models}
+        proprietaryModels={proprietaryModels}
         selectedModel={selectedModel}
         onModelChange={(m) => {
           setSelectedModel(m);
           localStorage.setItem("selected_model", m);
         }}
       />
+      <ModelsModal isOpen={isModelsOpen} onClose={() => setIsModelsOpen(false)} sessionId={sessionId} />
       <ShareModal isOpen={isShareOpen} onClose={() => setIsShareOpen(false)} sourcesCount={sources.length} />
 
       {/* Confirmation Modal for Reset Session */}
       <Modal isOpen={isNewSessionConfirmOpen} onClose={() => setIsNewSessionConfirmOpen(false)} title="Confirmation">
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           <div style={{ fontSize: "14px", color: "var(--text-main)" }}>
-            Êtes-vous sûr de vouloir commencer une nouvelle session ? Toutes vos sources et discussions en cours seront définitivement effacées de l'écran.
+            {"Êtes-vous sûr de vouloir commencer une nouvelle session ? Toutes vos sources et discussions en cours seront définitivement effacées de l'écran."}
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "8px" }}>
             <button

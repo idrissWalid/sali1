@@ -3,7 +3,7 @@
 import * as React from "react";
 import { motion, useAnimation } from "framer-motion";
 
-export interface UploadIconProps extends React.SVGProps<SVGSVGElement> {
+export interface UploadIconProps extends React.ComponentProps<typeof motion.svg> {
   size?: number | string;
   isHovered?: boolean;
 }
@@ -30,7 +30,7 @@ export function UploadIcon({ size = 24, isHovered, ...props }: UploadIconProps) 
       strokeWidth={2}
       strokeLinecap="round"
       strokeLinejoin="round"
-      {...props as any}
+      {...props as React.ComponentProps<typeof motion.svg>}
       onMouseEnter={() => {
         if (isHovered === undefined) controls.start("animate");
       }}

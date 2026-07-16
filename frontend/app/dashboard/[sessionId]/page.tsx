@@ -6,14 +6,27 @@ import {
   BarChart, Bar, PieChart, Pie, LineChart, Line, XAxis, YAxis, 
   CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell 
 } from "recharts";
-import { ArrowLeft, Loader2, Table2, BarChart3, Info } from "lucide-react";
+import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy } from "lucide-react";
 
 // Colors for charts
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#d0ed57', '#a4de6c'];
 
+interface DashboardData {
+  overview: {
+    n_lignes?: number;
+    n_colonnes?: number;
+    pct_valeurs_manquantes_total?: number;
+    n_doublons?: number;
+  };
+  preview: Record<string, unknown>[];
+  variables: Record<string, unknown>;
+  distributions: Record<string, { type: string; data: { name: string; value: number }[] }>;
+  filename: string;
+}
+
 export default function DashboardPage() {
   const { sessionId } = useParams();
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedVar, setSelectedVar] = useState<string>("");
@@ -32,8 +45,8 @@ export default function DashboardPage() {
         if (vars.length > 0) {
           setSelectedVar(vars[0]);
         }
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erreur de récupération");
       } finally {
         setLoading(false);
       }
@@ -75,16 +88,16 @@ export default function DashboardPage() {
             </p>
           </div>
           <button onClick={() => window.close()} className="px-4 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center gap-2 text-sm font-medium">
-            <ArrowLeft className="w-4 h-4" /> Fermer l'onglet
+            <ArrowLeft className="w-4 h-4" /> {"Fermer l'onglet"}
           </button>
         </div>
 
         {/* Global Stats Overview */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard title="Lignes" value={overview.n_lignes?.toLocaleString()} icon="📊" />
-          <StatCard title="Colonnes" value={overview.n_colonnes?.toLocaleString()} icon="📑" />
-          <StatCard title="Valeurs manquantes" value={`${overview.pct_valeurs_manquantes_total || 0}%`} icon="⚠️" />
-          <StatCard title="Doublons" value={overview.n_doublons?.toLocaleString() || 0} icon="🔄" />
+          <StatCard title="Lignes" value={overview.n_lignes?.toLocaleString() ?? 0} icon={Rows3} />
+          <StatCard title="Colonnes" value={overview.n_colonnes?.toLocaleString() ?? 0} icon={Columns3} />
+          <StatCard title="Valeurs manquantes" value={`${overview.pct_valeurs_manquantes_total ?? 0}%`} icon={AlertTriangle} />
+          <StatCard title="Doublons" value={overview.n_doublons?.toLocaleString() ?? 0} icon={Copy} />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -98,7 +111,7 @@ export default function DashboardPage() {
             
             <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
               {Object.keys(variables).map((varName) => {
-                const varInfo = variables[varName];
+                const varInfo = variables[varName] as { type?: string; pct_manquantes?: number } | undefined;
                 const isSelected = selectedVar === varName;
                 return (
                   <button
@@ -113,12 +126,12 @@ export default function DashboardPage() {
                     <div className="flex justify-between items-center">
                       <span className={`font-medium truncate mr-2 ${isSelected ? 'text-blue-700 dark:text-blue-400' : ''}`}>{varName}</span>
                       <span className="text-xs px-2 py-1 bg-gray-200 dark:bg-[#333] text-gray-600 dark:text-gray-300 rounded-md shrink-0">
-                        {varInfo.type}
+                        {varInfo?.type ?? "inconnu"}
                       </span>
                     </div>
-                    {varInfo.pct_manquantes > 0 && (
+                    {(varInfo?.pct_manquantes ?? 0) > 0 && (
                       <div className="text-xs text-orange-500 mt-1">
-                        {varInfo.pct_manquantes}% manquantes
+                        {varInfo?.pct_manquantes ?? 0}% manquantes
                       </div>
                     )}
                   </button>
@@ -152,9 +165,9 @@ export default function DashboardPage() {
                       outerRadius={140}
                       paddingAngle={2}
                       dataKey="value"
-                      label={({name, percent}) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                      label={({name, percent}) => `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`}
                     >
-                      {activeDist.data.map((entry: any, index: number) => (
+                      {activeDist.data.map((entry: Record<string, unknown>, index: number) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
@@ -177,7 +190,7 @@ export default function DashboardPage() {
                       cursor={{fill: 'rgba(255,255,255,0.1)'}}
                     />
                     <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]}>
-                      {activeDist.data.map((entry: any, index: number) => (
+                      {activeDist.data.map((entry: Record<string, unknown>, index: number) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Bar>
@@ -213,9 +226,9 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                {preview.map((row: any, i: number) => (
+                {preview.map((row: Record<string, unknown>, i: number) => (
                   <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-white/5 transition">
-                    {Object.values(row).map((val: any, j: number) => (
+                    {Object.values(row).map((val: unknown, j: number) => (
                       <td key={j} className="px-6 py-4 whitespace-nowrap text-gray-700 dark:text-gray-400">
                         {val === null ? <span className="text-gray-400 italic">null</span> : String(val)}
                       </td>
@@ -246,10 +259,10 @@ export default function DashboardPage() {
   );
 }
 
-function StatCard({ title, value, icon }: { title: string, value: string | number, icon: string }) {
+function StatCard({ title, value, icon: Icon }: { title: string, value: string | number, icon: React.ComponentType<{ className?: string }> }) {
   return (
     <div className="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl p-5 shadow-sm flex items-start gap-4">
-      <div className="text-3xl bg-gray-50 dark:bg-[#222] p-3 rounded-xl">{icon}</div>
+      <div className="bg-gray-50 dark:bg-[#222] p-3 rounded-xl text-blue-500"><Icon className="w-6 h-6" /></div>
       <div>
         <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">{title}</p>
         <p className="text-2xl font-bold mt-1">{value}</p>

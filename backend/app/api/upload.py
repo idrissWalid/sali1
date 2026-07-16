@@ -19,13 +19,14 @@ async def list_llm_models():
     except Exception:
         models = []
     # Set gemma as default if available
-    gemma_model = "gemma2:latest" if "gemma2:latest" in models else ("gemma:2b" if "gemma:2b" in models else "gemma")
-    if gemma_model in models:
+    gemma_model = "gemma2:latest" if "gemma2:latest" in models else ("gemma:2b" if "gemma:2b" in models else ("gemma" if "gemma" in models else None))
+    if gemma_model:
         models.remove(gemma_model)
-    models.insert(0, gemma_model)
-    if "gemini-3.1-flash-lite-preview" not in models:
-        models.append("gemini-3.1-flash-lite-preview")
-    return {"models": models}
+        models.insert(0, gemma_model)
+    return {
+        "models": models,
+        "proprietary": ["gemini-3.1-flash-lite-preview"]
+    }
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:latest"), index_doc: str = Form("true")):

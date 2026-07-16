@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Modal from "./Modal";
+import { Check, Copy, Mail, MessageSquare, Users } from "lucide-react";
 
 interface ShareModalProps {
   isOpen: boolean;
@@ -71,7 +72,7 @@ export default function ShareModal({ isOpen, onClose, sourcesCount }: ShareModal
         <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
           <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-main)" }}>Lien de partage public</div>
           <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-            Toute personne disposant de ce lien pourra lire l'analyse et la discussion sans modifier vos fichiers.
+            {"Toute personne disposant de ce lien pourra lire l'analyse et la discussion sans modifier vos fichiers."}
           </div>
 
           {shareLink ? (
@@ -107,7 +108,7 @@ export default function ShareModal({ isOpen, onClose, sourcesCount }: ShareModal
                   transition: "background 0.2s",
                 }}
               >
-                {copied ? "Copié ! ✓" : "Copier"}
+                {copied ? <><Check size={15} /> Copié</> : <><Copy size={15} /> Copier</>}
               </button>
             </div>
           ) : (
@@ -150,11 +151,12 @@ export default function ShareModal({ isOpen, onClose, sourcesCount }: ShareModal
           <div style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-muted)" }}>Ou partager directement via</div>
           <div style={{ display: "flex", gap: "10px" }}>
             {[
-              { name: "Email", icon: "✉️", color: "rgba(26, 115, 232, 0.1)", textColor: "#1a73e8" },
-              { name: "Slack", icon: "💬", color: "rgba(74, 21, 75, 0.1)", textColor: "#4a154b" },
-              { name: "Teams", icon: "👥", color: "rgba(70, 78, 184, 0.1)", textColor: "#464eb8" },
-            ].map((ch) => (
-              <button
+              { name: "Email", icon: Mail, color: "rgba(26, 115, 232, 0.1)", textColor: "#1a73e8" },
+              { name: "Slack", icon: MessageSquare, color: "rgba(74, 21, 75, 0.1)", textColor: "#b998c4" },
+              { name: "Teams", icon: Users, color: "rgba(70, 78, 184, 0.1)", textColor: "#9fa8ff" },
+            ].map((ch) => {
+              const Icon = ch.icon;
+              return <button
                 key={ch.name}
                 onClick={() => alert(`Lien partagé vers ${ch.name} !`)}
                 style={{
@@ -176,10 +178,10 @@ export default function ShareModal({ isOpen, onClose, sourcesCount }: ShareModal
                 onMouseEnter={(e) => e.currentTarget.style.opacity = "0.85"}
                 onMouseLeave={(e) => e.currentTarget.style.opacity = "1"}
               >
-                <span>{ch.icon}</span>
+                <Icon size={16} strokeWidth={1.8} />
                 <span>{ch.name}</span>
               </button>
-            ))}
+            })}
           </div>
         </div>
 

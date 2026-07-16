@@ -195,9 +195,12 @@ export const SmoothInput = ({
   };
 
   const updateCaretRef = useRef(updateCaretFromInput);
-  updateCaretRef.current = updateCaretFromInput;
   const caretOpacityRef = useRef(caretOpacity);
-  caretOpacityRef.current = caretOpacity;
+
+  useEffect(() => {
+    updateCaretRef.current = updateCaretFromInput;
+    caretOpacityRef.current = caretOpacity;
+  });
 
   useEffect(() => {
     const input = inputRef.current;

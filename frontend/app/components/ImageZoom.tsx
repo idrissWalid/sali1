@@ -167,7 +167,7 @@ export function Image<T extends React.ElementType = "img">({
         userSelect: "none",
         pointerEvents: "none",
       }}
-      {...props as any}
+      {...props as Record<string, unknown>}
     />
   );
 }

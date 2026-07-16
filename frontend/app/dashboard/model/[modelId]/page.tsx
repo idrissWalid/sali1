@@ -2,13 +2,14 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { AlertTriangle, ArrowLeft, Crosshair } from 'lucide-react';
 
 interface ModelInfo {
   id: string;
   name: string;
   type: string;
   features: string[];
-  metrics: Record<string, any>;
+  metrics: Record<string, unknown>;
   created_at: string;
 }
 
@@ -18,44 +19,37 @@ export default function ModelDashboard({ params }: { params: { modelId: string }
   const [error, setError] = useState<string | null>(null);
   
   const [formData, setFormData] = useState<Record<string, string>>({});
-  const [prediction, setPrediction] = useState<any>(null);
+  const [prediction, setPrediction] = useState<unknown>(null);
   const [predicting, setPredicting] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
-    // We need to fetch the model info, but our API currently gets models by sessionId.
-    // However, we don't have an endpoint to get a single model by ID returning JSON.
-    // Let's create a quick way or assume we need one.
-    // Wait, we don't have GET /api/models/info/{modelId}, only /download and /predict.
-    // Let me add an endpoint for getting model metadata in models.py, or I can fetch all models
-    // if I pass sessionId... But I only have modelId here.
-    // Let's implement fetching model info.
+    async function fetchModelInfo() {
+      try {
+        setLoading(true);
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const res = await fetch(`${apiUrl}/api/models/info/${params.modelId}`);
+        if (!res.ok) throw new Error("Erreur lors de la récupération des détails du modèle");
+        const data = await res.json();
+        setModel(data);
+        
+        // Initialize form
+        const initialData: Record<string, string> = {};
+        if (data.features) {
+          data.features.forEach((feat: string) => {
+            initialData[feat] = "";
+          });
+        }
+        setFormData(initialData);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Erreur de récupération");
+      } finally {
+        setLoading(false);
+      }
+    }
+
     fetchModelInfo();
   }, [params.modelId]);
-
-  const fetchModelInfo = async () => {
-    try {
-      setLoading(true);
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-      const res = await fetch(`${apiUrl}/api/models/info/${params.modelId}`);
-      if (!res.ok) throw new Error("Erreur lors de la récupération des détails du modèle");
-      const data = await res.json();
-      setModel(data);
-      
-      // Initialize form
-      const initialData: Record<string, string> = {};
-      if (data.features) {
-        data.features.forEach((feat: string) => {
-          initialData[feat] = "";
-        });
-      }
-      setFormData(initialData);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handlePredict = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +58,7 @@ export default function ModelDashboard({ params }: { params: { modelId: string }
       setPrediction(null);
       
       // Parse numerical values if possible
-      const parsedFeatures: Record<string, any> = {};
+      const parsedFeatures: Record<string, string | number> = {};
       Object.keys(formData).forEach(key => {
         const val = formData[key];
         if (!isNaN(Number(val)) && val.trim() !== "") {
@@ -88,8 +82,8 @@ export default function ModelDashboard({ params }: { params: { modelId: string }
       
       const data = await res.json();
       setPrediction(data.prediction);
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erreur lors de la prédiction");
     } finally {
       setPredicting(false);
     }
@@ -114,7 +108,7 @@ export default function ModelDashboard({ params }: { params: { modelId: string }
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center gap-4 mb-8">
           <button onClick={() => router.back()} className="px-4 py-2 bg-[#1e1e24] hover:bg-[#26262e] rounded-lg transition-colors border border-[#2d2d3a]">
-            ← Retour
+            <ArrowLeft size={16} className="inline mr-2" /> Retour
           </button>
           <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400">
             Dashboard Prédictif : {model.name}
@@ -155,7 +149,7 @@ export default function ModelDashboard({ params }: { params: { modelId: string }
           <div className="md:col-span-2">
             <div className="bg-[#1e1e24] border border-[#2d2d3a] rounded-xl p-6 shadow-xl">
               <h2 className="text-xl font-semibold mb-6 text-gray-200 flex items-center gap-2">
-                <span>🎯</span> Simulation en temps réel
+                <Crosshair size={20} strokeWidth={1.8} /> Simulation en temps réel
               </h2>
               
               <form onSubmit={handlePredict} className="space-y-4">
@@ -177,7 +171,7 @@ export default function ModelDashboard({ params }: { params: { modelId: string }
                   </div>
                 ) : (
                   <div className="text-yellow-400 text-sm p-4 bg-yellow-900/20 border border-yellow-900/50 rounded-lg">
-                    ⚠️ Ce modèle ne spécifie pas de caractéristiques d'entrée claires. Les prédictions peuvent échouer.
+                    <AlertTriangle size={17} className="inline mr-2 align-text-bottom" /> Ce modèle ne spécifie pas de caractéristiques d&apos;entrée claires. Les prédictions peuvent échouer.
                   </div>
                 )}
                 

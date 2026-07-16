@@ -20,19 +20,14 @@ type SlotProps<T extends HTMLElement = HTMLElement> = {
   children?: any;
 } & DOMMotionProps<T>;
 
-function mergeRefs<T>(
-  ...refs: (React.Ref<T> | undefined)[]
-): React.RefCallback<T> {
-  return (node) => {
-    refs.forEach((ref) => {
-      if (!ref) return;
-      if (typeof ref === 'function') {
-        ref(node);
-      } else {
-        (ref as React.RefObject<T | null>).current = node;
-      }
-    });
-  };
+function assignRef<T>(ref: React.Ref<T> | undefined, value: T | null) {
+  if (!ref) return;
+  if (typeof ref === 'function') {
+    ref(value);
+  } else {
+    const mutableRef = ref as React.MutableRefObject<T | null>;
+    mutableRef.current = value;
+  }
 }
 
 function mergeProps<T extends HTMLElement>(
@@ -58,6 +53,20 @@ function mergeProps<T extends HTMLElement>(
   return merged;
 }
 
+const motionComponentCache = new Map<unknown, React.ElementType>();
+
+function getMotionComponent(type: unknown): React.ElementType {
+  if (typeof type !== 'string') {
+    return type as React.ElementType;
+  }
+  let Cached = motionComponentCache.get(type);
+  if (!Cached) {
+    Cached = motion.create(type) as React.ElementType;
+    motionComponentCache.set(type, Cached);
+  }
+  return Cached;
+}
+
 function Slot<T extends HTMLElement = HTMLElement>({
   children,
   ref,
@@ -72,7 +81,7 @@ function Slot<T extends HTMLElement = HTMLElement>({
     () =>
       isAlreadyMotion
         ? (children.type as React.ElementType)
-        : motion.create(children.type as React.ElementType),
+        : getMotionComponent(children.type),
     [isAlreadyMotion, children.type],
   );
 
@@ -82,8 +91,15 @@ function Slot<T extends HTMLElement = HTMLElement>({
 
   const mergedProps = mergeProps(childProps, props);
 
-  return (
-    <Base {...mergedProps} ref={mergeRefs(childRef as React.Ref<T>, ref)} />
+  return React.createElement(
+    Base,
+    {
+      ...mergedProps,
+      ref: (node: T | null) => {
+        assignRef(childRef as React.Ref<T>, node);
+        assignRef(ref, node);
+      }
+    }
   );
 }
 

@@ -1,9 +1,10 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import SplitText from "./SplitText";
 import { UploadIcon } from "./UploadIcon";
 import Modal from "./Modal";
 import { Progress } from "./Progress";
+import { Check, FileText, Search, Table2, X } from "lucide-react";
 
 interface Source {
   name: string;
@@ -11,16 +12,28 @@ interface Source {
   meta: string;
 }
 
+interface UploadData {
+  session_id: string;
+  filename?: string;
+  profile?: {
+    filename?: string;
+  };
+  type: string;
+  interpretation?: string;
+  summary?: string;
+}
+
 interface Props {
   sources: Source[];
-  onUpload: (data: any) => void;
+  onUpload: (data: UploadData) => void;
   onRemove: (index: number) => void;
   hideHeader?: boolean;
   style?: React.CSSProperties;
   selectedModel?: string;
+  registerUploadHandler?: (handler: (() => void) | null) => void;
 }
 
-export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader = false, style, selectedModel }: Props) {
+export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader = false, style, selectedModel, registerUploadHandler }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadHovered, setIsUploadHovered] = useState(false);
   const [loadingState, setLoadingState] = useState<{
@@ -37,6 +50,13 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
 
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+
+  useEffect(() => {
+    registerUploadHandler?.(() => setIsUploadModalOpen(true));
+    return () => {
+      registerUploadHandler?.(null);
+    };
+  }, [registerUploadHandler]);
 
   const processFile = async (f: File) => {
 
@@ -112,7 +132,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
           }
         }
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error(err);
       alert("Erreur lors du chargement. Vérifiez que le backend est démarré.");
       setLoadingState(prev => ({ ...prev, isLoading: false }));
@@ -161,11 +181,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
         borderRadius: "24px",
         padding: "8px 16px",
       }}>
-        <span style={{ color: "var(--text-muted)", display: "flex", alignItems: "center" }}>
-          <svg data-name="i-search" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" width="18" height="18">
-            <path d="M21.25 21.25L16.8702 16.8017M19.2504 10.9994C19.2504 15.5557 15.5567 19.2494 11.0004 19.2494C6.44402 19.2494 2.75037 15.5557 2.75037 10.9994C2.75037 6.44304 6.44402 2.74939 11.0004 2.74939C15.5567 2.74939 19.2504 6.44304 19.2504 10.9994Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </span>
+        <Search size={17} strokeWidth={1.8} color="var(--text-muted)" />
         <input
           placeholder="Rechercher une source"
           style={{
@@ -360,7 +376,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
                 ? "rgba(52,168,83,0.15)"
                 : "rgba(234,67,53,0.15)",
             }}>
-              {src.type === "tabular" ? "📗" : "📕"}
+              {src.type === "tabular" ? <Table2 size={16} color="#72d39b" /> : <FileText size={16} color="#e59a9a" />}
             </div>
 
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -378,7 +394,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
               </div>
             </div>
 
-            <span style={{ color: "var(--accent-color)", fontSize: "16px", flexShrink: 0 }}>✓</span>
+            <Check size={16} strokeWidth={2} color="var(--accent-color)" style={{ flexShrink: 0 }} />
 
             <button
               onClick={() => onRemove(i)}
@@ -395,7 +411,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
               onMouseEnter={e => (e.currentTarget as HTMLElement).style.color = "#ea4335"}
               onMouseLeave={e => (e.currentTarget as HTMLElement).style.color = "#555"}
             >
-              ×
+              <X size={17} strokeWidth={1.8} />
             </button>
           </div>
         ))}

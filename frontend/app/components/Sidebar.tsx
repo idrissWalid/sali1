@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { FileText, Plus, Table2, Trash2 } from "lucide-react";
 
 interface SessionItem {
   id: string;
@@ -93,7 +94,7 @@ export default function Sidebar({
               e.currentTarget.style.color = "var(--text-muted)";
             }}
           >
-            ＋
+            <Plus size={17} strokeWidth={1.8} />
           </button>
         </div>
       ) : (
@@ -130,7 +131,7 @@ export default function Sidebar({
               e.currentTarget.style.background = "var(--bubble-ai)";
             }}
           >
-            ＋ Nouvelle discussion
+            <Plus size={15} strokeWidth={1.8} /> Nouvelle discussion
           </button>
         </div>
       )}
@@ -194,7 +195,7 @@ export default function Sidebar({
                       ? "rgba(52,168,83,0.12)"
                       : "rgba(234,67,53,0.12)",
                   }}>
-                    {session.type === "tabular" ? "📗" : "📕"}
+                    {session.type === "tabular" ? <Table2 size={15} color="#72d39b" /> : <FileText size={15} color="#e59a9a" />}
                   </div>
 
                   {/* Title & Metadata */}
@@ -249,7 +250,7 @@ export default function Sidebar({
                         e.currentTarget.style.color = "var(--text-muted)";
                       }}
                     >
-                      ×
+                      <Trash2 size={14} strokeWidth={1.8} />
                     </button>
                   )}
                 </div>
