@@ -62,7 +62,10 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
 
     const formData = new FormData();
     formData.append("file", f);
-    formData.append("model", selectedModel || "gemma2:latest");
+    // Le backend applique son modèle local par défaut. On n'envoie donc jamais
+    // une valeur vide ou périmée sauvegardée dans le navigateur.
+    const model = selectedModel?.trim();
+    if (model) formData.append("model", model);
     formData.append("index_doc", "true");
 
     setLoadingState({

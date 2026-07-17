@@ -6,7 +6,7 @@ import {
   BarChart, Bar, PieChart, Pie, LineChart, Line, XAxis, YAxis, 
   CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell 
 } from "recharts";
-import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy } from "lucide-react";
+import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy, Sun, Moon } from "lucide-react";
 
 // Colors for charts
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#d0ed57', '#a4de6c'];
@@ -30,6 +30,34 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedVar, setSelectedVar] = useState<string>("");
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        if (mutation.attributeName === "data-theme") {
+          const newTheme = document.documentElement.getAttribute("data-theme") as "dark" | "light";
+          if (newTheme) setTheme(newTheme);
+        }
+      });
+    });
+    observer.observe(document.documentElement, { attributes: true });
+    
+    const currentTheme = document.documentElement.getAttribute("data-theme") as "dark" | "light" | null;
+    if (currentTheme) {
+      setTheme(currentTheme);
+    } else {
+      setTheme("dark");
+    }
+    
+    return () => observer.disconnect();
+  }, []);
+
+  const toggleTheme = () => {
+    const newTheme = theme === "dark" ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", newTheme);
+    setTheme(newTheme);
+  };
 
   useEffect(() => {
     const fetchData = async () => {
@@ -76,40 +104,45 @@ export default function DashboardPage() {
   const activeDist = selectedVar ? distributions[selectedVar] : null;
 
   return (
-    <div className="min-h-screen w-full bg-gray-50 dark:bg-[#111] text-gray-900 dark:text-gray-100 p-6 md:p-10 font-sans">
-      <div className="max-w-7xl mx-auto space-y-8">
+    <div className="dashboard-shell min-h-screen w-full bg-gray-50 dark:bg-[#111] text-gray-900 dark:text-gray-100 font-sans">
+      <div className="dashboard-container">
         
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="dashboard-header flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Dashboard Analytique</h1>
             <p className="text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-2">
               <Table2 className="w-4 h-4" /> Fichier source : <span className="font-semibold text-gray-700 dark:text-gray-300">{filename}</span>
             </p>
           </div>
-          <button onClick={() => window.close()} className="px-4 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center gap-2 text-sm font-medium">
-            <ArrowLeft className="w-4 h-4" /> {"Fermer l'onglet"}
-          </button>
+          <div className="flex gap-2">
+            <button onClick={toggleTheme} className="p-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center justify-center text-sm font-medium">
+              {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}
+            </button>
+            <button onClick={() => window.close()} className="px-4 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center gap-2 text-sm font-medium">
+              <ArrowLeft className="w-4 h-4" /> {"Fermer l'onglet"}
+            </button>
+          </div>
         </div>
 
         {/* Global Stats Overview */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="dashboard-stats grid grid-cols-2 md:grid-cols-4">
           <StatCard title="Lignes" value={overview.n_lignes?.toLocaleString() ?? 0} icon={Rows3} />
           <StatCard title="Colonnes" value={overview.n_colonnes?.toLocaleString() ?? 0} icon={Columns3} />
           <StatCard title="Valeurs manquantes" value={`${overview.pct_valeurs_manquantes_total ?? 0}%`} icon={AlertTriangle} />
           <StatCard title="Doublons" value={overview.n_doublons?.toLocaleString() ?? 0} icon={Copy} />
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="dashboard-main-grid grid grid-cols-1 lg:grid-cols-3">
           {/* Left Column: Variable Selector */}
-          <div className="lg:col-span-1 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-sm">
+          <div className="dashboard-panel dashboard-selector lg:col-span-1 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm">
             <div className="flex items-center gap-2 mb-4">
               <BarChart3 className="w-5 h-5 text-blue-500" />
               <h2 className="text-xl font-bold">Variables</h2>
             </div>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Sélectionnez une variable pour visualiser sa distribution.</p>
             
-            <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+            <div className="dashboard-variable-list space-y-2 overflow-y-auto custom-scrollbar">
               {Object.keys(variables).map((varName) => {
                 const varInfo = variables[varName] as { type?: string; pct_manquantes?: number } | undefined;
                 const isSelected = selectedVar === varName;
@@ -141,12 +174,12 @@ export default function DashboardPage() {
           </div>
 
           {/* Right Column: Chart Display */}
-          <div className="lg:col-span-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-sm flex flex-col min-h-[400px]">
+          <div className="dashboard-panel dashboard-chart lg:col-span-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm flex flex-col">
             <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
               {activeDist?.type === "timeseries" ? "Évolution temporelle de" : "Distribution de"} <span className="text-blue-500">{selectedVar}</span>
             </h2>
             
-            <div className="flex-1 w-full h-full min-h-[400px]">
+            <div className="dashboard-chart-canvas flex-1 w-full">
               {!activeDist || !activeDist.data || activeDist.data.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-gray-400">
                   <div className="text-center">
@@ -159,13 +192,13 @@ export default function DashboardPage() {
                   <PieChart>
                     <Pie
                       data={activeDist.data}
-                      cx="50%"
+                      cx="38%"
                       cy="50%"
-                      innerRadius={80}
-                      outerRadius={140}
+                      innerRadius={72}
+                      outerRadius={126}
                       paddingAngle={2}
                       dataKey="value"
-                      label={({name, percent}) => `${name} (${((percent ?? 0) * 100).toFixed(0)}%)`}
+                      label={false}
                     >
                       {activeDist.data.map((entry: Record<string, unknown>, index: number) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
@@ -175,7 +208,7 @@ export default function DashboardPage() {
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
                       itemStyle={{ color: '#fff' }}
                     />
-                    <Legend />
+                    <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ right: 16, lineHeight: '24px' }} />
                   </PieChart>
                 </ResponsiveContainer>
               ) : activeDist.type === "numeric" ? (
@@ -214,7 +247,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Data Preview Table */}
-        <div className="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl p-6 shadow-sm overflow-hidden">
+        <div className="dashboard-panel dashboard-preview bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
           <h2 className="text-xl font-bold mb-4">Aperçu des données (5 premières lignes)</h2>
           <div className="overflow-x-auto custom-scrollbar pb-4">
             <table className="w-full text-sm text-left">
@@ -243,6 +276,43 @@ export default function DashboardPage() {
       </div>
 
       <style dangerouslySetInnerHTML={{__html: `
+        .dashboard-shell {
+          padding: 32px clamp(20px, 4vw, 72px) 48px;
+        }
+        .dashboard-container {
+          width: min(100%, 1680px);
+          margin: 0 auto;
+          display: grid;
+          gap: 24px;
+        }
+        .dashboard-header { gap: 24px; }
+        .dashboard-stats { gap: 16px; }
+        .dashboard-main-grid { gap: 24px; align-items: stretch; }
+        .dashboard-panel { padding: 24px; }
+        .dashboard-selector, .dashboard-chart { min-height: 500px; }
+        .dashboard-selector { display: flex; flex-direction: column; }
+        .dashboard-variable-list { flex: 1; max-height: 410px; padding-right: 8px; }
+        .dashboard-chart-canvas { min-height: 420px; }
+        .dashboard-preview { padding-bottom: 8px; }
+        .dashboard-preview > h2 { margin-bottom: 18px; }
+        .dashboard-preview td, .dashboard-preview th { padding: 12px 16px; }
+        .dashboard-stat { min-height: 104px; padding: 20px; }
+        @media (max-width: 1023px) {
+          .dashboard-selector, .dashboard-chart { min-height: 440px; }
+        }
+        @media (max-width: 640px) {
+          .dashboard-shell { padding: 20px 14px 32px; }
+          .dashboard-container { gap: 16px; }
+          .dashboard-header { align-items: flex-start; flex-direction: column; gap: 16px; }
+          .dashboard-header > div:last-child { width: 100%; }
+          .dashboard-header button:last-child { flex: 1; justify-content: center; }
+          .dashboard-stats { gap: 10px; }
+          .dashboard-main-grid { gap: 16px; }
+          .dashboard-panel { padding: 18px; }
+          .dashboard-chart-canvas { min-height: 360px; }
+          .dashboard-chart .recharts-legend-wrapper { display: none; }
+          .dashboard-chart .recharts-pie { transform: translateX(18%); }
+        }
         .custom-scrollbar::-webkit-scrollbar {
           height: 6px;
           width: 6px;
@@ -261,7 +331,7 @@ export default function DashboardPage() {
 
 function StatCard({ title, value, icon: Icon }: { title: string, value: string | number, icon: React.ComponentType<{ className?: string }> }) {
   return (
-    <div className="bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl p-5 shadow-sm flex items-start gap-4">
+    <div className="dashboard-stat bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm flex items-start gap-4">
       <div className="bg-gray-50 dark:bg-[#222] p-3 rounded-xl text-blue-500"><Icon className="w-6 h-6" /></div>
       <div>
         <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">{title}</p>

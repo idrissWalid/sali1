@@ -23,9 +23,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 600M
+          memory: 4G
         reservations:
-          memory: 256M
+          memory: 1G
 
   frontend:
     build:
@@ -43,9 +43,9 @@ services:
     deploy:
       resources:
         limits:
-          memory: 200M
+          memory: 1G
         reservations:
-          memory: 128M
+          memory: 512M
 
   sandbox-builder:
     # A dummy service to build the sandbox image during compose up

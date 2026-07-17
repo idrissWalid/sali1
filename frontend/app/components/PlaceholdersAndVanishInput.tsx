@@ -177,6 +177,9 @@ export function PlaceholdersAndVanishInput({
         style={{
           color: animating ? "transparent" : "var(--text-main)",
           caretColor: "var(--accent-color)",
+          border: "none",
+          outline: "none",
+          boxShadow: "none",
         }}
       />
 

@@ -8,7 +8,9 @@ pypdf
 reportlab
 python-docx
 pandas
-numpy
+numpy<1.26.0
+numba<0.59.0
+setuptools<70
 seaborn
 scikit-learn
 statsmodels

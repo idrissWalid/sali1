@@ -294,12 +294,7 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
           </div>
 
           <div style={{ padding: "0 16px 18px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "9px" }}>
-            <button onClick={openReportModal} disabled={!sessionId} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px", borderRadius: "12px", border: "1px solid var(--border-muted)", color: "var(--text-main)", background: "var(--bubble-ai)", cursor: sessionId ? "pointer" : "not-allowed", textAlign: "left", opacity: sessionId ? 1 : .5 }}>
-              <FileDown size={18} color="var(--accent-color)" /><span style={{ flex: 1, fontSize: "12px", fontWeight: 550 }}>Générer un rapport</span><span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Choisir le format</span>
-            </button>
-            <button onClick={openTrainingModal} disabled={!sessionId} style={{ display: "flex", alignItems: "center", gap: "10px", padding: "12px", borderRadius: "12px", border: "1px solid var(--border-muted)", color: "var(--text-main)", background: "var(--bubble-ai)", cursor: sessionId ? "pointer" : "not-allowed", textAlign: "left", opacity: sessionId ? 1 : .5 }}>
-              <PackageCheck size={18} color="var(--accent-color)" /><span style={{ flex: 1, fontSize: "12px", fontWeight: 550 }}>Entraîner un modèle</span><span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Configurer</span>
-            </button>
+
 
             {generatedItems.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>

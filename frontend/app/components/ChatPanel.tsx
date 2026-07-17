@@ -9,7 +9,7 @@ import { ImageZoom, Image } from "./ImageZoom";
 import Modal from "./Modal";
 import { PlaceholdersAndVanishInput } from "./PlaceholdersAndVanishInput";
 import WelcomePanel from "./WelcomePanel";
-import { Bot, FileText, MoreVertical, Settings2 } from "lucide-react";
+import { FileText, MoreVertical, Settings2 } from "lucide-react";
 
 interface Message {
   role: "user" | "assistant";
@@ -283,8 +283,8 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
   };
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, loading]);
 
   // Ajout du message initial une seule fois par session
   useEffect(() => {
@@ -320,13 +320,16 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         if (!res.ok) throw new Error("Erreur serveur");
         const data = await res.json();
 
-        if (data && data.messages) {
+        if (data && data.messages?.length) {
           setMessages(data.messages);
 
           // Marquer les anciens messages comme tapés pour éviter l'animation d'écriture
           const doneSet = new Set<number>();
           data.messages.forEach((_: Message, idx: number) => doneSet.add(idx));
           setTypingDone(doneSet);
+        } else if (initialMessage) {
+          // L'analyse retournée après l'upload peut ne pas être encore persistée.
+          setMessages([initialMessage]);
         }
       } catch (err) {
         console.error("Erreur lors du chargement de l'historique:", err);
@@ -335,7 +338,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       }
     };
     fetchHistory();
-  }, [sessionId]);
+  }, [sessionId, initialMessage]);
 
   const sendMessage = async (text: string) => {
     if (!text || !sessionId || loading) return;
@@ -343,11 +346,20 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     setLoading(true);
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const selected = selectedModel?.trim();
       const res = await fetch(`${apiUrl}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, message: text, model: selectedModel }),
+        body: JSON.stringify({
+          session_id: sessionId,
+          message: text,
+          ...(selected ? { model: selected } : {}),
+        }),
       });
+      if (!res.ok) {
+        const error = await res.text();
+        throw new Error(error || `Erreur serveur (${res.status})`);
+      }
       const data = await res.json();
       const textResponse = data.response;
       setMessages(m => [...m, {
@@ -454,7 +466,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         {/* Messages */}
         <div
           className={messages.length === 0 ? "chat-messages chat-messages--empty" : "chat-messages"}
-          style={{ flex: 1, overflowY: "auto", padding: "24px", paddingBottom: "90px", minHeight: 0 }}
+          style={{ flex: 1, overflowY: "auto", padding: "24px", paddingBottom: "24px", minHeight: 0 }}
         >
 
           {messages.length === 0 && sourceCount === 0 && (
@@ -481,7 +493,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontSize: "13px", flexShrink: 0, marginRight: "10px", marginTop: "4px",
                   boxShadow: "0 2px 10px rgba(138,180,248,0.3)",
-                }}><Bot size={15} strokeWidth={1.9} /></div>
+                }}></div>
               )}
               <div style={{
                 maxWidth: "75%",
@@ -631,7 +643,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                 display: "flex", alignItems: "center", justifyContent: "center",
                 marginRight: "10px", flexShrink: 0,
                 boxShadow: "0 2px 10px rgba(138,180,248,0.3)",
-              }}><Bot size={15} strokeWidth={1.9} /></div>
+              }}></div>
               <div style={{
                 padding: "14px 18px",
                 background: "var(--bubble-ai)",
@@ -663,12 +675,10 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           <div ref={bottomRef} />
         </div>
 
-        {/* Input flottant — Zone saisie premium */}
+        {/* Zone saisie premium : elle ne recouvre jamais les messages. */}
         <div style={{
-          position: "absolute",
-          bottom: "6px",
-          left: "2%",
-          right: "2%",
+          flexShrink: 0,
+          margin: "0 2% 6px",
         }}>
           <style>{`
             @keyframes chat-pulse-ring {
