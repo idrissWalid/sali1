@@ -1,7 +1,8 @@
 import os
-
+import logging
 import requests
 
+logger = logging.getLogger("app.ollama")
 
 OLLAMA_API_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434/api/generate")
 DEFAULT_OLLAMA_MODEL = os.getenv("DEFAULT_OLLAMA_MODEL", "gemma2:latest")
@@ -12,7 +13,7 @@ MAX_PROMPT_CHARS = int(os.getenv("OLLAMA_MAX_PROMPT_CHARS", "16000"))
 # aux modèles installés. Forcer le CPU évite l'arrêt du serveur Ollama (500).
 # Mettre OLLAMA_NUM_GPU=-1 dans le .env pour laisser Ollama exploiter un GPU
 # correctement dimensionné.
-OLLAMA_NUM_GPU = int(os.getenv("OLLAMA_NUM_GPU", "0"))
+OLLAMA_NUM_GPU = int(os.getenv("OLLAMA_NUM_GPU", "1"))
 FALLBACK_MODELS = tuple(
     model.strip()
     for model in os.getenv("OLLAMA_FALLBACK_MODELS", "qwen3.5:0.8b,gemma:2b").split(",")
@@ -47,9 +48,15 @@ def _generate(model: str, prompt: str, num_ctx: int, num_predict: int) -> str:
             "num_gpu": OLLAMA_NUM_GPU,
         },
     }
-    response = requests.post(OLLAMA_API_URL, json=payload, timeout=180)
-    response.raise_for_status()
-    return response.json().get("response", "")
+    logger.debug("Ollama request: model=%s num_ctx=%d num_predict=%d num_gpu=%s prompt_len=%d", model, num_ctx, num_predict, OLLAMA_NUM_GPU, len(prompt))
+    try:
+        response = requests.post(OLLAMA_API_URL, json=payload, timeout=180)
+        logger.debug("Ollama HTTP %s response (truncated 1000 chars): %s", response.status_code, response.text[:1000])
+        response.raise_for_status()
+        return response.json().get("response", "")
+    except requests.RequestException as e:
+        logger.exception("Erreur lors de l'appel à Ollama: %s", str(e))
+        raise
 
 
 def ask_ollama(prompt: str, model: str | None = None) -> str:

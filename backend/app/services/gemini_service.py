@@ -1,7 +1,10 @@
+import logging
 from google import genai
 from google.genai import types
 from app.services.ollama_service import ask_ollama
 from app.core.config import GEMINI_API_KEY
+
+logger = logging.getLogger("app.gemini")
 
 _client = None
 
@@ -9,8 +12,14 @@ def get_gemini_client():
     global _client
     if _client is None:
         if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY_HERE":
+            logger.error("GEMINI_API_KEY non configurée ou invalide. Vérifiez backend/.env ou la variable d'environnement.")
             raise ValueError("Clé API Gemini manquante. Veuillez configurer GEMINI_API_KEY dans le fichier .env.")
-        _client = genai.Client(api_key=GEMINI_API_KEY)
+        try:
+            _client = genai.Client(api_key=GEMINI_API_KEY)
+            logger.info("Client Gemini initialisé avec succès.")
+        except Exception:
+            logger.exception("Échec lors de l'initialisation du client Gemini.")
+            raise
     return _client
 
 
@@ -49,13 +58,13 @@ def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: s
             return ask_ollama(ollama_prompt, model=model)
 
         client = get_gemini_client()
-        chat = client.chats.create(
-            model=model,
-            history=gemini_history
-        )
+        logger.debug("Envoyer requête Gemini — model=%s prompt_len=%d history_len=%d", model, len(full_prompt), len(gemini_history))
+        chat = client.chats.create(model=model, history=gemini_history)
         response = chat.send_message(full_prompt)
+        logger.debug("Réponse Gemini reçue (len=%d)", len(response.text) if getattr(response, 'text', None) else 0)
         return response.text
     except Exception as e:
+        logger.exception("Erreur lors de l'appel à Gemini : %s", str(e))
         return f"Erreur Gemini : {str(e)}"
 
 
