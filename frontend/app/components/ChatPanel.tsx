@@ -212,6 +212,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const clearChat = () => {
     setMessages([]);
@@ -344,6 +345,8 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     if (!text || !sessionId || loading) return;
     setMessages(m => [...m, { role: "user", text }]);
     setLoading(true);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
       const selected = selectedModel?.trim();
@@ -355,6 +358,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           message: text,
           ...(selected ? { model: selected } : {}),
         }),
+        signal: controller.signal,
       });
       if (!res.ok) {
         const error = await res.text();
@@ -369,10 +373,16 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         sources: data.sources || [],
       }]);
       onAssistantMessage?.(textResponse);
-    } catch {
-      setMessages(m => [...m, { role: "assistant", text: "Erreur de connexion au serveur." }]);
+    } catch (err: any) {
+      if (err && err.name === 'AbortError') {
+        setMessages(m => [...m, { role: "assistant", text: "Réponse interrompue." }]);
+      } else {
+        setMessages(m => [...m, { role: "assistant", text: "Erreur de connexion au serveur." }]);
+      }
+    } finally {
+      setLoading(false);
+      abortControllerRef.current = null;
     }
-    setLoading(false);
   };
 
   const send = async () => {
@@ -419,6 +429,29 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         </span>
 
         <div style={{ display: "flex", gap: "8px" }}>
+          {loading && (
+            <button
+              onClick={() => {
+                if (abortControllerRef.current) abortControllerRef.current.abort();
+                setLoading(false);
+              }}
+              title="Interrompre la réponse"
+              style={{
+                width: "36px", height: "36px", borderRadius: "50%",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: "var(--text-muted)", fontSize: "16px", cursor: "pointer",
+                border: "none", background: "transparent",
+                transition: "background 0.2s",
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "var(--bubble-ai)"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
           <button
             onClick={() => setIsSettingsOpen(true)}
             style={{
