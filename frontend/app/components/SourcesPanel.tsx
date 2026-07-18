@@ -332,7 +332,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.xlsx,.xls,.pdf,.docx"
+        accept=".csv,.xlsx,.xls,.pdf,.docx,.md,.txt"
         style={{ display: "none" }}
         onChange={handleFile}
       />
@@ -348,7 +348,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
             lineHeight: 1.7,
           }}>
             Aucune source chargée.<br />
-            Ajoutez un fichier CSV, Excel ou PDF.
+            Ajoutez un fichier CSV, Excel, PDF, Word, Markdown ou TXT.
           </div>
         )}
 
@@ -471,7 +471,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
             </div>
           </div>
           <div style={{ fontSize: "12px", color: "var(--text-dim)", marginTop: "4px" }}>
-            Formats supportés : CSV, XLSX, XLS, PDF, DOCX
+            Formats supportés : CSV, XLSX, PDF, DOCX, MD, TXT
           </div>
         </div>
       </Modal>

@@ -2,13 +2,13 @@ import pandas as pd
 import json
 from pathlib import Path
 
-ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".pdf"}
+ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".pdf", ".docx", ".md", ".txt"}
 
 def detect_file_type(filename: str) -> str:
     ext = Path(filename).suffix.lower()
     if ext in [".csv", ".xlsx", ".xls"]:
         return "tabular"
-    elif ext == ".pdf":
+    elif ext in [".pdf", ".docx", ".md", ".txt"]:
         return "document"
     else:
         return "unsupported"

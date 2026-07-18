@@ -42,7 +42,21 @@ interface UploadData {
 }
 
 export default function Home() {
-  const [sources, setSources] = useState<Source[]>([]);
+  const [sources, setSources] = useState<Source[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("active_sources");
+        return saved ? JSON.parse(saved) : [];
+      } catch { return []; }
+    }
+    return [];
+  });
+  const [sessionType, setSessionType] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("active_session_type") || "tabular";
+    }
+    return "tabular";
+  });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [initialMessage, setInitialMessage] = useState<{ role: "assistant"; text: string; isSummary?: boolean } | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
@@ -84,8 +98,22 @@ export default function Home() {
       localStorage.setItem("active_session_id", sessionId);
     } else {
       localStorage.removeItem("active_session_id");
+      localStorage.removeItem("active_sources");
+      localStorage.removeItem("active_session_type");
     }
   }, [sessionId]);
+
+  useEffect(() => {
+    if (sources.length > 0) {
+      localStorage.setItem("active_sources", JSON.stringify(sources));
+    } else {
+      localStorage.removeItem("active_sources");
+    }
+  }, [sources]);
+
+  useEffect(() => {
+    localStorage.setItem("active_session_type", sessionType);
+  }, [sessionType]);
 
   const fetchSessions = async () => {
     try {
@@ -135,16 +163,19 @@ export default function Home() {
       
       // Mettre à jour les sources avec le fichier de la session
       if (data.filename) {
+        const srcType = data.type === "tabular" ? "tabular" : "document";
         setSources([
           {
             name: data.filename,
-            type: data.type === "tabular" ? "tabular" : "document",
-            meta: data.type === "tabular" ? "Données tabulaires" : "Document PDF/Word",
+            type: srcType,
+            meta: data.type === "tabular" ? "Données tabulaires" : "Document",
           }
         ]);
+        setSessionType(data.type || "tabular");
         setLeftTab("sources");
       } else {
         setSources([]);
+        setSessionType("tabular");
       }
       
       // Pas de message initial lors de la reprise d'une session
@@ -153,6 +184,8 @@ export default function Home() {
       console.error("Erreur lors du chargement des détails de la session:", err);
       if (id === localStorage.getItem("active_session_id")) {
         localStorage.removeItem("active_session_id");
+        localStorage.removeItem("active_sources");
+        localStorage.removeItem("active_session_type");
       }
     }
   };
@@ -178,15 +211,17 @@ export default function Home() {
 
   const handleUpload = (data: UploadData) => {
     setSessionId(data.session_id);
+    const isTabular = data.type === "tabular_analyzed";
     const newSource: Source = {
       name: data.filename || data.profile?.filename || "Source",
-      type: data.type === "tabular_analyzed" ? "tabular" : "document",
-      meta: data.type === "tabular_analyzed" ? "Données tabulaires" : "Document PDF/Word",
+      type: isTabular ? "tabular" : "document",
+      meta: isTabular ? "Données tabulaires" : "Document",
     };
     setSources(s => [...s, newSource]);
+    setSessionType(isTabular ? "tabular" : "document");
     setLeftTab("sources");
-    const text = data.type === "tabular_analyzed" ? (data.interpretation ?? "") : (data.summary ?? "");
-    setInitialMessage({ role: "assistant", text, isSummary: data.type === "tabular_analyzed" });
+    const text = isTabular ? (data.interpretation ?? "") : (data.summary ?? "");
+    setInitialMessage({ role: "assistant", text, isSummary: isTabular });
 
     // Rafraîchir l'historique des sessions
     fetchSessions();
@@ -199,6 +234,7 @@ export default function Home() {
   const handleNewSession = () => {
     setSources([]);
     setSessionId(null);
+    setSessionType("tabular");
     setInitialMessage(null);
   };
 
@@ -500,7 +536,7 @@ export default function Home() {
           </Panel>
           <Separator style={{ width: "8px", background: "transparent", cursor: "col-resize", transition: "background 0.2s" }} />
           <Panel defaultSize={23} minSize={15} style={{ height: "100%" }}>
-            <StudioPanel sessionId={sessionId} generatedContent={generatedContent} openModels={() => setIsModelsOpen(true)} />
+            <StudioPanel sessionId={sessionId} sessionType={sessionType} generatedContent={generatedContent} openModels={() => setIsModelsOpen(true)} />
           </Panel>
         </Group>
       </div>
