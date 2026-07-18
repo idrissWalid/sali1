@@ -6,8 +6,51 @@ from app.services.ingestion_service import detect_file_type, load_tabular
 from app.services.analysis_service import analyze_tabular
 from app.services.session_service import create_session, save_data_context, add_to_history
 from app.services.session_service import save_file_bytes
+from app.services.rag_service import index_document, summarize_document, get_document_chunks
+from app.services.gemini_service import ask_gemini
+from app.services.ollama_service import ask_ollama
 
 router = APIRouter()
+
+
+def batch_summarize_chunks(chunks: list[str], model: str) -> str:
+    if not chunks:
+        return ""
+
+    max_batch_size = 6
+    max_batches = 8
+    batch_summaries = []
+    batch_count = min((len(chunks) + max_batch_size - 1) // max_batch_size, max_batches)
+
+    for batch_index in range(batch_count):
+        start = batch_index * max_batch_size
+        batch = chunks[start:start + max_batch_size]
+        prompt = f"""
+Voici un extrait d'un document. Rédige un résumé clair et synthétique en français du passage entier.
+Ne commence pas par une introduction (pas de 'Bonjour', 'Voici', 'En tant que ...').
+
+{chr(10).join(batch)}
+
+Résumé :
+"""
+        summary = ask_gemini(prompt, model=model) if model and model.startswith("gemini") else ask_ollama(prompt, model=model)
+        batch_summaries.append(summary.strip())
+
+    if len(batch_summaries) == 0:
+        return ""
+    if len(batch_summaries) == 1:
+        return batch_summaries[0]
+
+    combined_prompt = f"""
+Tu disposes des résumés intermédiaires de plusieurs parties d'un document.
+Regroupe-les et rédige un résumé final unique en français.
+Ne commence pas par des formules d'introduction ; va directement à l'essentiel.
+
+{chr(10).join(batch_summaries)}
+
+Résumé final :
+"""
+    return ask_gemini(combined_prompt, model=model) if model and model.startswith("gemini") else ask_ollama(combined_prompt, model=model)
 
 @router.get("/llm-models")
 async def list_llm_models():
@@ -157,17 +200,10 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
             try:
                 session_id = create_session()
                 set_session_type(session_id, "document")
-                
+
                 if index_doc.lower() == "true":
                     index_result = index_document(session_id, file_bytes, filename)
-                    if index_result["status"] == "error":
-                        yield json.dumps({
-                            "status": "error",
-                            "message": "Le document n'a pas pu être indexé. Vérifiez qu'il contient du texte lisible.",
-                            "technical": index_result.get("message", "Indexing error")
-                        }) + "\n"
-                        return
-                    chunks_indexed = index_result["chunks_indexed"]
+                    chunks_indexed = index_result.get("chunks_indexed", 0)
                 else:
                     chunks_indexed = 0
             except Exception as e:
@@ -187,13 +223,23 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
             await asyncio.sleep(0.05)
 
             try:
-                if index_doc.lower() == "true":
-                    raw_context = summarize_document(session_id)
+                from app.services.rag_service import extract_text_from_pdf
+                raw_context = extract_text_from_pdf(file_bytes)
+                if index_doc.lower() == "true" and chunks_indexed > 0:
+                    indexed_context = summarize_document(session_id, model=model)
+                    if indexed_context.strip():
+                        raw_context = indexed_context
                 else:
-                    from app.services.rag_service import extract_text_from_pdf
-                    full_text = extract_text_from_pdf(file_bytes)
-                    raw_context = " ".join(full_text.split()[:2400]) # Prend environ le même nombre de mots que 6 chunks
-                    
+                    raw_context = " ".join(raw_context.split()[:2400])  # Prend environ le même nombre de mots que 6 chunks
+
+                if not raw_context.strip():
+                    yield json.dumps({
+                        "status": "error",
+                        "message": "Le document ne contient pas de texte lisible. Vérifiez qu'il est bien un PDF texte.",
+                        "technical": "No extractable text in PDF"
+                    }) + "\n"
+                    return
+
                 summary_prompt = f"""
                 Voici le début d'un document :
 

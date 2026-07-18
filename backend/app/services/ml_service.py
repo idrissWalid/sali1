@@ -1,6 +1,10 @@
 from app.services.gemini_service import get_gemini_client
-from google.genai import types
 from app.services.model_specs import ModelFamily, MODEL_SPECS
+
+try:
+    from google.genai import types
+except Exception:  # pragma: no cover - optional dependency
+    types = None
 
 ML_KEYWORDS = [
     "prédis", "prédit", "prédire", "prédiction", "modèle", "entraîne",
@@ -51,7 +55,7 @@ Si c'est pour réduire la dimension ou faire une ACP -> factor_analysis
 
 def generate_ml_code(question: str, data_context: str, family: ModelFamily, history: list = [], model: str = "gemma2:latest") -> str:
     spec = MODEL_SPECS[family]
-    
+
     prompt = f"""
 Tu es un expert en machine learning Python.
 

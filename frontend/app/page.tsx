@@ -187,7 +187,7 @@ export default function Home() {
     setLeftTab("sources");
     const text = data.type === "tabular_analyzed" ? (data.interpretation ?? "") : (data.summary ?? "");
     setInitialMessage({ role: "assistant", text, isSummary: data.type === "tabular_analyzed" });
-    
+
     // Rafraîchir l'historique des sessions
     fetchSessions();
   };

@@ -1,6 +1,15 @@
 import logging
-from google import genai
-from google.genai import types
+
+try:
+    from google import genai
+    from google.genai import types
+except Exception as exc:  # pragma: no cover - environment-dependent import
+    genai = None
+    types = None
+    _GENAI_IMPORT_ERROR = exc
+else:
+    _GENAI_IMPORT_ERROR = None
+
 from app.services.ollama_service import ask_ollama
 from app.core.config import GEMINI_API_KEY
 
@@ -8,9 +17,27 @@ logger = logging.getLogger("app.gemini")
 
 _client = None
 
+
+def _build_gemini_history(history: list) -> list:
+    if types is None:
+        return []
+    gemini_history = []
+    for msg in history[-10:]:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append(
+            types.Content(
+                role=role,
+                parts=[types.Part.from_text(text=msg["content"])]
+            )
+        )
+    return gemini_history
+
+
 def get_gemini_client():
     global _client
     if _client is None:
+        if _GENAI_IMPORT_ERROR is not None:
+            raise RuntimeError(f"Google GenAI indisponible : {_GENAI_IMPORT_ERROR}") from _GENAI_IMPORT_ERROR
         if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY_HERE":
             logger.error("GEMINI_API_KEY non configurée ou invalide. Vérifiez backend/.env ou la variable d'environnement.")
             raise ValueError("Clé API Gemini manquante. Veuillez configurer GEMINI_API_KEY dans le fichier .env.")
@@ -39,15 +66,7 @@ def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: s
             full_prompt += f"\n\n{data_context}"
         full_prompt += f"\n\nQuestion : {prompt}"
 
-        gemini_history = []
-        for msg in history[-10:]:  # garde les 10 derniers échanges
-            role = "user" if msg["role"] == "user" else "model"
-            gemini_history.append(
-                types.Content(
-                    role=role,
-                    parts=[types.Part.from_text(text=msg["content"])]
-                )
-            )
+        gemini_history = _build_gemini_history(history)
 
         if model and not model.startswith("gemini"):
             # Route vers Ollama
@@ -95,15 +114,7 @@ Juste le code Python pur, directement exécutable.
 IMPORTANT: Lors de tes analyses visuelles, PRIVILÉGIE l'utilisation de courbes (graphiques linéaires, séries temporelles, courbes de tendance) pour montrer l'évolution et les résultats dès que les données s'y prêtent.
 """
     try:
-        gemini_history = []
-        for msg in history[-10:]:
-            role = "user" if msg["role"] == "user" else "model"
-            gemini_history.append(
-                types.Content(
-                    role=role,
-                    parts=[types.Part.from_text(text=msg["content"])]
-                )
-            )
+        gemini_history = _build_gemini_history(history)
 
         if model and not model.startswith("gemini"):
             # Route vers Ollama
