@@ -11,6 +11,11 @@ import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTria
 // Colors for charts
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#d0ed57', '#a4de6c'];
 
+// Formatte les valeurs de l'axe Y de façon compacte (1200 -> "1,2k") pour éviter
+// les libellés à rallonge qui se chevauchent, et arrondit le bruit flottant.
+const formatAxisNumber = (value: number) =>
+  new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+
 interface DashboardData {
   overview: {
     n_lignes?: number;
@@ -215,9 +220,15 @@ export default function DashboardPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={activeDist.data} margin={{ top: 20, right: 30, left: 0, bottom: 50 }}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{fill: '#888', fontSize: 12}} />
-                    <YAxis tick={{fill: '#888'}} />
-                    <Tooltip 
+                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{fill: '#888', fontSize: 12}} interval={0} />
+                    <YAxis
+                      tick={{fill: '#888'}}
+                      domain={[0, 'auto']}
+                      allowDecimals={false}
+                      tickFormatter={formatAxisNumber}
+                      width={56}
+                    />
+                    <Tooltip
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
                       itemStyle={{ color: '#fff' }}
                       cursor={{fill: 'rgba(255,255,255,0.1)'}}
@@ -233,9 +244,15 @@ export default function DashboardPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={activeDist.data} margin={{ top: 20, right: 30, left: 0, bottom: 50 }}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{fill: '#888', fontSize: 12}} />
-                    <YAxis tick={{fill: '#888'}} />
-                    <Tooltip 
+                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{fill: '#888', fontSize: 12}} minTickGap={20} />
+                    <YAxis
+                      tick={{fill: '#888'}}
+                      domain={[0, 'auto']}
+                      allowDecimals={activeDist.type === "timeseries"}
+                      tickFormatter={formatAxisNumber}
+                      width={56}
+                    />
+                    <Tooltip
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
                     />
                     <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} dot={{r: 4, fill: '#3b82f6'}} />

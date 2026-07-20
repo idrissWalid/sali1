@@ -4,6 +4,20 @@ import json
 from app.services.gemini_service import ask_gemini
 from app.services.profiling_service import generate_profiling_stats
 
+def format_axis_number(x: float) -> str:
+    """Formate une valeur numérique pour l'affichage sur un axe de graphique
+    (évite les libellés à rallonge du type '123456.7' qui se chevauchent une
+    fois l'axe des abscisses tourné à -45°)."""
+    abs_x = abs(x)
+    if abs_x >= 1_000_000:
+        return f"{x / 1_000_000:.1f}M"
+    if abs_x >= 1_000:
+        return f"{x / 1_000:.1f}k"
+    if float(x).is_integer():
+        return f"{int(x)}"
+    return f"{x:.2f}"
+
+
 def convert_types(obj):
     if isinstance(obj, (np.integer,)):
         return int(obj)
@@ -245,7 +259,7 @@ async def get_dashboard_data(session_id: str) -> dict:
                     counts, bin_edges = np.histogram(df_col_clean, bins=10)
                     hist_data = []
                     for i in range(len(counts)):
-                        bin_name = f"{bin_edges[i]:.1f} - {bin_edges[i+1]:.1f}"
+                        bin_name = f"{format_axis_number(bin_edges[i])} - {format_axis_number(bin_edges[i+1])}"
                         hist_data.append({"name": bin_name, "value": int(counts[i])})
                     distributions[col] = {
                         "type": "numeric",

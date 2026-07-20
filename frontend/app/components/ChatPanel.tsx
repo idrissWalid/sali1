@@ -52,13 +52,106 @@ function renderInlineMarkdown(text: string): ReactNode[] {
   });
 }
 
+// ── Détection / parsing des tableaux Markdown (GFM) ──────────
+function splitTableRow(line: string): string[] {
+  let trimmed = line.trim();
+  if (trimmed.startsWith("|")) trimmed = trimmed.slice(1);
+  if (trimmed.endsWith("|")) trimmed = trimmed.slice(0, -1);
+  return trimmed.split("|").map(c => c.trim());
+}
+
+function isTableSeparatorRow(line: string, expectedCols: number): boolean {
+  const trimmed = line.trim();
+  if (!/^[:\-|\s]+$/.test(trimmed) || !trimmed.includes("-")) return false;
+  const cells = splitTableRow(trimmed);
+  return cells.length === expectedCols && cells.every(c => /^:?-+:?$/.test(c));
+}
+
+type ColAlign = "left" | "center" | "right";
+
+function renderTable(headerCells: string[], alignCells: string[], rows: string[][], key: string): ReactNode {
+  const aligns: ColAlign[] = alignCells.map(c => {
+    const left = c.startsWith(":");
+    const right = c.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return "left";
+  });
+
+  return (
+    <div key={key} style={{ overflowX: "auto", margin: "10px 0", borderRadius: "10px", border: "1px solid var(--border-color)" }}>
+      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "13px" }}>
+        <thead>
+          <tr>
+            {headerCells.map((h, ci) => (
+              <th
+                key={ci}
+                style={{
+                  textAlign: aligns[ci] || "left",
+                  padding: "9px 14px",
+                  borderBottom: "2px solid var(--border-color)",
+                  fontWeight: 600,
+                  color: "var(--text-main)",
+                  background: "var(--bubble-ai)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {renderInlineMarkdown(h)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, ri) => (
+            <tr key={ri} style={{ background: ri % 2 === 1 ? "var(--bg-panel)" : "transparent" }}>
+              {headerCells.map((_, ci) => (
+                <td
+                  key={ci}
+                  style={{
+                    textAlign: aligns[ci] || "left",
+                    padding: "9px 14px",
+                    borderBottom: "1px solid var(--border-muted)",
+                    color: "var(--text-main)",
+                    verticalAlign: "top",
+                  }}
+                >
+                  {renderInlineMarkdown(row[ci] ?? "")}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 // ── Rendu markdown amélioré ──────────────────────────────────
 function renderMarkdown(text: string, onPropositionClick?: (text: string) => void): ReactNode[] {
   const lines = text.split("\n");
   let inPropositions = false;
+  const nodes: ReactNode[] = [];
 
-  return lines.map((line, i) => {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const cleanLine = line.trim();
+
+    // 0. Détection des tableaux (GFM: ligne d'en-tête + ligne séparatrice |---|---|)
+    if (cleanLine.includes("|") && i + 1 < lines.length) {
+      const headerCells = splitTableRow(cleanLine);
+      if (headerCells.length >= 2 && isTableSeparatorRow(lines[i + 1], headerCells.length)) {
+        const alignCells = splitTableRow(lines[i + 1]);
+        let j = i + 2;
+        const rows: string[][] = [];
+        while (j < lines.length && lines[j].trim().includes("|")) {
+          rows.push(splitTableRow(lines[j]));
+          j++;
+        }
+        nodes.push(renderTable(headerCells, alignCells, rows, `table-${i}`));
+        i = j - 1;
+        continue;
+      }
+    }
 
     // 1. Détection des titres (headers) ou pseudo-titres en gras
     let isHeader = false;
@@ -103,7 +196,8 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
         lineHeight: 1.4,
       };
 
-      return <HeaderTag key={i} style={style}>{renderInlineMarkdown(content)}</HeaderTag>;
+      nodes.push(<HeaderTag key={i} style={style}>{renderInlineMarkdown(content)}</HeaderTag>);
+      continue;
     }
 
     // 2. Détection des listes à puces (bullet points) ou numérotées
@@ -123,7 +217,7 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
 
       if (inPropositions && onPropositionClick) {
         // En mode proposition, on rend une bulle cliquable
-        return (
+        nodes.push(
           <div
             key={i}
             onClick={() => onPropositionClick(listContent.replace(/\*\*/g, ""))} // Enlève le gras pour l'input
@@ -154,19 +248,22 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
             {renderInlineMarkdown(listContent)}
           </div>
         );
+        continue;
       }
 
-      return (
+      nodes.push(
         <div key={i} style={{ display: "flex", gap: "8px", margin: "6px 0 6px 12px", alignItems: "flex-start" }}>
           <span style={{ color: "var(--accent-color)", fontWeight: numMatch ? "bold" : "normal", fontSize: numMatch ? "13px" : "inherit", marginTop: numMatch ? "0" : "1px" }}>{prefix}</span>
           <span style={{ flex: 1 }}>{renderInlineMarkdown(listContent)}</span>
         </div>
       );
+      continue;
     }
 
     // 4. Paragraphe classique ou ligne vide
     if (cleanLine === "") {
-      return <div key={i} style={{ height: "8px" }} />;
+      nodes.push(<div key={i} style={{ height: "8px" }} />);
+      continue;
     }
 
     const upperLine = cleanLine.toUpperCase();
@@ -180,12 +277,14 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
       inPropositions = true;
     }
 
-    return (
+    nodes.push(
       <p key={i} style={{ margin: "4px 0" }}>
         {renderInlineMarkdown(line)}
       </p>
     );
-  });
+  }
+
+  return nodes;
 }
 // ─────────────────────────────────────────────────────────────
 
