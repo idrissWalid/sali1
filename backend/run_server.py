@@ -12,7 +12,6 @@ def patched_load_default_certs(self, *args, **kwargs):
 
 ssl.SSLContext.load_default_certs = patched_load_default_certs
 
-import torch
 import uvicorn
 from app.main import app
 import logging
