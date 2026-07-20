@@ -290,8 +290,8 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
           </div>
 
           {/* Mini barre de progression Radix UI */}
-          <Progress 
-            value={loadingState.step === 1 ? 25 : loadingState.step === 2 ? 50 : loadingState.step === 3 ? 75 : 95} 
+          <Progress
+            value={loadingState.step === 1 ? 25 : loadingState.step === 2 ? 50 : loadingState.step === 3 ? 75 : 95}
             className="h-1.5"
           />
         </div>
@@ -332,7 +332,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
       <input
         ref={fileInputRef}
         type="file"
-        accept=".csv,.xlsx,.xls,.pdf,.docx,.md,.txt"
+        accept=".csv,.xlsx,.xls,.pdf,.docx"
         style={{ display: "none" }}
         onChange={handleFile}
       />
@@ -348,7 +348,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
             lineHeight: 1.7,
           }}>
             Aucune source chargée.<br />
-            Ajoutez un fichier CSV, Excel, PDF, Word, Markdown ou TXT.
+            Ajoutez un fichier CSV, Excel ou PDF.
           </div>
         )}
 
@@ -471,7 +471,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
             </div>
           </div>
           <div style={{ fontSize: "12px", color: "var(--text-dim)", marginTop: "4px" }}>
-            Formats supportés : CSV, XLSX, PDF, DOCX, MD, TXT
+            Formats supportés : CSV, XLSX, XLS, PDF, DOCX
           </div>
         </div>
       </Modal>

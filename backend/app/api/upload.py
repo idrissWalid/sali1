@@ -97,7 +97,7 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
         if file_type == "unsupported":
             yield json.dumps({
                 "status": "error",
-                "message": "Format non supporté. Utilisez CSV, Excel, PDF, Word (.docx), Markdown (.md) ou TXT.",
+                "message": "Format non supporté. Utilisez CSV, Excel ou PDF.",
                 "technical": "Unsupported file format"
             }) + "\n"
             return
@@ -223,20 +223,20 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
             await asyncio.sleep(0.05)
 
             try:
-                from app.services.rag_service import extract_text_from_document
-                raw_context = extract_text_from_document(file_bytes, filename)
+                from app.services.rag_service import extract_text_from_pdf
+                raw_context = extract_text_from_pdf(file_bytes)
                 if index_doc.lower() == "true" and chunks_indexed > 0:
                     indexed_context = summarize_document(session_id, model=model)
                     if indexed_context.strip():
                         raw_context = indexed_context
                 else:
-                    raw_context = " ".join(raw_context.split()[:2400])
+                    raw_context = " ".join(raw_context.split()[:2400])  # Prend environ le même nombre de mots que 6 chunks
 
                 if not raw_context.strip():
                     yield json.dumps({
                         "status": "error",
-                        "message": "Le document ne contient pas de texte lisible. Vérifiez que le fichier n'est pas vide ou corrompu.",
-                        "technical": "No extractable text in document"
+                        "message": "Le document ne contient pas de texte lisible. Vérifiez qu'il est bien un PDF texte.",
+                        "technical": "No extractable text in PDF"
                     }) + "\n"
                     return
 

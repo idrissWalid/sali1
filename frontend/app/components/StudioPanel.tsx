@@ -7,22 +7,25 @@ import GlareHover from './GlareHover';
 
 interface Props {
   sessionId: string | null;
-  sessionType?: string;
   generatedContent?: string;
   openModels?: () => void;
 }
 
 const STUDIO_ITEMS_SOON = [
-  { icon: (
-    <span style={{ display: "inline-flex", alignItems: "center" }}>
-      <AudioLines size={22} strokeWidth={1.8} />
-    </span>
-  ), label: "Résumé audio" },
-  { icon: (
-    <span style={{ display: "inline-flex", alignItems: "center" }}>
-      <FolderOpen size={22} strokeWidth={1.8} />
-    </span>
-  ), label: "Fiches synthèse" },
+  {
+    icon: (
+      <span style={{ display: "inline-flex", alignItems: "center" }}>
+        <AudioLines size={22} strokeWidth={1.8} />
+      </span>
+    ), label: "Résumé audio"
+  },
+  {
+    icon: (
+      <span style={{ display: "inline-flex", alignItems: "center" }}>
+        <FolderOpen size={22} strokeWidth={1.8} />
+      </span>
+    ), label: "Fiches synthèse"
+  },
 ];
 
 type ReportFormat = "pdf" | "word" | null;
@@ -42,7 +45,7 @@ const REPORT_PLACEHOLDERS = [
   "Ex. observations importantes à mettre en avant...",
 ];
 
-export default function StudioPanel({ sessionId, sessionType = "tabular", generatedContent, openModels }: Props) {
+export default function StudioPanel({ sessionId, generatedContent, openModels }: Props) {
   const [isReportModalOpen, setIsReportModalOpen] = useState(false);
   const [isTrainingModalOpen, setIsTrainingModalOpen] = useState(false);
   const [reportFormat, setReportFormat] = useState<ReportFormat>(null);
@@ -183,29 +186,26 @@ export default function StudioPanel({ sessionId, sessionType = "tabular", genera
 
           {/* Dashboard Interactif */}
           <GlareHover
-            onClick={() => { if (sessionId && sessionType === "tabular") window.open(`/dashboard/${sessionId}`, "_blank"); }}
+            onClick={() => { if (sessionId) window.open(`/dashboard/${sessionId}`, "_blank"); }}
             background="var(--bubble-ai)"
             borderColor="var(--border-color)"
             borderRadius="14px"
             glareOpacity={0.3}
             style={{
               padding: "16px 14px",
-              cursor: (sessionId && sessionType === "tabular") ? "pointer" : "not-allowed",
+              cursor: sessionId ? "pointer" : "not-allowed",
               minHeight: "90px",
               display: "flex",
               flexDirection: "column",
               justifyContent: "space-between",
-              opacity: (sessionId && sessionType === "tabular") ? 1 : 0.4,
+              opacity: sessionId ? 1 : 0.5,
             }}
-            onMouseEnter={(e) => { if (sessionId && sessionType === "tabular") (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-user)'); }}
+            onMouseEnter={(e) => { if (sessionId) (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-user)'); }}
             onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-ai)')}
           >
             <LayoutDashboard size={23} strokeWidth={1.7} />
             <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-main)", marginTop: "10px", lineHeight: 1.3 }}>
               Dashboard interactif
-              {sessionType !== "tabular" && sessionId && (
-                <div style={{ fontSize: "11px", color: "var(--text-dim)", marginTop: "3px" }}>CSV/Excel uniquement</div>
-              )}
             </div>
           </GlareHover>
 

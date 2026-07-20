@@ -42,32 +42,18 @@ interface UploadData {
 }
 
 export default function Home() {
-  const [sources, setSources] = useState<Source[]>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem("active_sources");
-        return saved ? JSON.parse(saved) : [];
-      } catch { return []; }
-    }
-    return [];
-  });
-  const [sessionType, setSessionType] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      return localStorage.getItem("active_session_type") || "tabular";
-    }
-    return "tabular";
-  });
+  const [sources, setSources] = useState<Source[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [initialMessage, setInitialMessage] = useState<{ role: "assistant"; text: string; isSummary?: boolean } | null>(null);
   const [theme, setTheme] = useState<"dark" | "light">("dark");
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [leftTab, setLeftTab] = useState<"sources" | "history">("sources");
   const [openUpload, setOpenUpload] = useState<(() => void) | null>(null);
-  
+
   const registerUploadHandler = useCallback((handler: (() => void) | null) => {
     setOpenUpload(() => handler);
   }, []);
-  
+
   const [models, setModels] = useState<string[]>(["gemma2:latest"]);
   const [proprietaryModels, setProprietaryModels] = useState<string[]>(["gemini-3.1-flash-lite-preview"]);
   const [selectedModel, setSelectedModel] = useState<string>(() => {
@@ -98,22 +84,8 @@ export default function Home() {
       localStorage.setItem("active_session_id", sessionId);
     } else {
       localStorage.removeItem("active_session_id");
-      localStorage.removeItem("active_sources");
-      localStorage.removeItem("active_session_type");
     }
   }, [sessionId]);
-
-  useEffect(() => {
-    if (sources.length > 0) {
-      localStorage.setItem("active_sources", JSON.stringify(sources));
-    } else {
-      localStorage.removeItem("active_sources");
-    }
-  }, [sources]);
-
-  useEffect(() => {
-    localStorage.setItem("active_session_type", sessionType);
-  }, [sessionType]);
 
   const fetchSessions = async () => {
     try {
@@ -158,48 +130,43 @@ export default function Home() {
       const res = await fetch(`${apiUrl}/api/sessions/${id}`);
       if (!res.ok) throw new Error("Erreur serveur");
       const data = await res.json();
-      
+
       setSessionId(data.id);
-      
+
       // Mettre à jour les sources avec le fichier de la session
       if (data.filename) {
-        const srcType = data.type === "tabular" ? "tabular" : "document";
         setSources([
           {
             name: data.filename,
-            type: srcType,
-            meta: data.type === "tabular" ? "Données tabulaires" : "Document",
+            type: data.type === "tabular" ? "tabular" : "document",
+            meta: data.type === "tabular" ? "Données tabulaires" : "Document PDF/Word",
           }
         ]);
-        setSessionType(data.type || "tabular");
         setLeftTab("sources");
       } else {
         setSources([]);
-        setSessionType("tabular");
       }
-      
+
       // Pas de message initial lors de la reprise d'une session
       setInitialMessage(null);
     } catch (err) {
       console.error("Erreur lors du chargement des détails de la session:", err);
       if (id === localStorage.getItem("active_session_id")) {
         localStorage.removeItem("active_session_id");
-        localStorage.removeItem("active_sources");
-        localStorage.removeItem("active_session_type");
       }
     }
   };
 
   const handleDeleteSession = async (id: string) => {
     if (!confirm("Voulez-vous vraiment supprimer cette discussion ?")) return;
-    
+
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
       await fetch(`${apiUrl}/api/sessions/${id}`, { method: "DELETE" });
-      
+
       // Recharger la liste
       fetchSessions();
-      
+
       // Si la session en cours a été supprimée, on réinitialise
       if (sessionId === id) {
         handleNewSession();
@@ -211,17 +178,15 @@ export default function Home() {
 
   const handleUpload = (data: UploadData) => {
     setSessionId(data.session_id);
-    const isTabular = data.type === "tabular_analyzed";
     const newSource: Source = {
       name: data.filename || data.profile?.filename || "Source",
-      type: isTabular ? "tabular" : "document",
-      meta: isTabular ? "Données tabulaires" : "Document",
+      type: data.type === "tabular_analyzed" ? "tabular" : "document",
+      meta: data.type === "tabular_analyzed" ? "Données tabulaires" : "Document PDF/Word",
     };
     setSources(s => [...s, newSource]);
-    setSessionType(isTabular ? "tabular" : "document");
     setLeftTab("sources");
-    const text = isTabular ? (data.interpretation ?? "") : (data.summary ?? "");
-    setInitialMessage({ role: "assistant", text, isSummary: isTabular });
+    const text = data.type === "tabular_analyzed" ? (data.interpretation ?? "") : (data.summary ?? "");
+    setInitialMessage({ role: "assistant", text, isSummary: data.type === "tabular_analyzed" });
 
     // Rafraîchir l'historique des sessions
     fetchSessions();
@@ -234,7 +199,6 @@ export default function Home() {
   const handleNewSession = () => {
     setSources([]);
     setSessionId(null);
-    setSessionType("tabular");
     setInitialMessage(null);
   };
 
@@ -353,7 +317,7 @@ export default function Home() {
 
         {/* Droite : boutons */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          
+
           {/* Theme Toggle */}
           <button
             onClick={(e) => {
@@ -363,7 +327,7 @@ export default function Home() {
                 Math.max(x, window.innerWidth - x),
                 Math.max(y, window.innerHeight - y)
               );
-              
+
               document.documentElement.style.setProperty('--click-x', `${x}px`);
               document.documentElement.style.setProperty('--click-y', `${y}px`);
               document.documentElement.style.setProperty('--max-radius', `${maxRadius}px`);
@@ -399,7 +363,8 @@ export default function Home() {
 
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             {[
-              { label: "Nouvelle session", icon: Plus, action: () => {
+              {
+                label: "Nouvelle session", icon: Plus, action: () => {
                   if (sources.length > 0) {
                     setIsNewSessionConfirmOpen(true);
                   } else {
@@ -536,7 +501,7 @@ export default function Home() {
           </Panel>
           <Separator style={{ width: "8px", background: "transparent", cursor: "col-resize", transition: "background 0.2s" }} />
           <Panel defaultSize={23} minSize={15} style={{ height: "100%" }}>
-            <StudioPanel sessionId={sessionId} sessionType={sessionType} generatedContent={generatedContent} openModels={() => setIsModelsOpen(true)} />
+            <StudioPanel sessionId={sessionId} generatedContent={generatedContent} openModels={() => setIsModelsOpen(true)} />
           </Panel>
         </Group>
       </div>
@@ -547,9 +512,9 @@ export default function Home() {
       </div>
 
       {/* Global Modals */}
-      <SettingsModal 
-        isOpen={isSettingsOpen} 
-        onClose={() => setIsSettingsOpen(false)} 
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
         models={models}
         proprietaryModels={proprietaryModels}
         selectedModel={selectedModel}

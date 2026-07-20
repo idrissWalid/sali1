@@ -67,11 +67,6 @@ def get_embedding_model():
 
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Extrait le texte d'un PDF (conservé pour compatibilité rétrograde)."""
-    return _extract_pdf(file_bytes)
-
-
-def _extract_pdf(file_bytes: bytes) -> str:
     text_parts = []
     try:
         reader = PdfReader(io.BytesIO(file_bytes))
@@ -97,48 +92,6 @@ def _extract_pdf(file_bytes: bytes) -> str:
 
     return "\n\n".join(text_parts).strip()
 
-
-def _extract_docx(file_bytes: bytes) -> str:
-    """Extrait le texte d'un fichier Word (.docx)."""
-    try:
-        from docx import Document
-        doc = Document(io.BytesIO(file_bytes))
-        paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-        return "\n\n".join(paragraphs).strip()
-    except ImportError:
-        print("python-docx non installé. pip install python-docx")
-        return ""
-    except Exception as e:
-        print("DOCX extraction failed:", e)
-        return ""
-
-
-def _extract_text(file_bytes: bytes) -> str:
-    """Extrait le texte d'un fichier TXT ou Markdown."""
-    for encoding in ("utf-8", "latin-1", "cp1252"):
-        try:
-            return file_bytes.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return file_bytes.decode("utf-8", errors="replace")
-
-
-def extract_text_from_document(file_bytes: bytes, filename: str = "") -> str:
-    """Extrait le texte de n'importe quel type de document supporté."""
-    ext = os.path.splitext(filename)[1].lower() if filename else ""
-    if ext == ".pdf" or not ext:
-        return _extract_pdf(file_bytes)
-    elif ext == ".docx":
-        return _extract_docx(file_bytes)
-    elif ext in (".md", ".txt"):
-        return _extract_text(file_bytes)
-    else:
-        # Fallback : essaie PDF puis texte brut
-        result = _extract_pdf(file_bytes)
-        if not result.strip():
-            result = _extract_text(file_bytes)
-        return result
-
 def chunk_page_text(page_text: str, page_number: int, chunk_size: int = 400, overlap: int = 50) -> list:
     words = page_text.split()
     chunks = []
@@ -155,7 +108,7 @@ def chunk_page_text(page_text: str, page_number: int, chunk_size: int = 400, ove
 def index_document(session_id: str, file_bytes: bytes, filename: str) -> dict:
     try:
         all_chunks = []
-        extracted_text = extract_text_from_document(file_bytes, filename)
+        extracted_text = extract_text_from_pdf(file_bytes)
         if extracted_text.strip():
             all_chunks = chunk_page_text(extracted_text, 1)
 
