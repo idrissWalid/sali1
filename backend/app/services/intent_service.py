@@ -1,5 +1,4 @@
-from app.services.gemini_service import get_gemini_client, ask_gemini
-from app.services.ollama_service import ask_ollama
+from app.services.gemini_service import complete_text
 
 INTENT_PROMPT = """Classifie la demande suivante en UN SEUL MOT parmi ces options :
 - visualisation : l'utilisateur veut un graphique, une courbe, une distribution visuelle, un diagramme, un plot
@@ -18,16 +17,8 @@ Demande : "{message}"
 def detect_intent(message: str, model: str = "gemma2:latest") -> str:
     try:
         prompt = INTENT_PROMPT.format(message=message)
-        if model and model.startswith("gemini"):
-            client = get_gemini_client()
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt
-            )
-            response_text = response.text
-        else:
-            response_text = ask_ollama(prompt, model=model)
-            
+        response_text = complete_text(prompt, model)
+
         intent = response_text.strip().lower().replace(".", "").replace("\n", "")
         valid = {"visualisation", "ml", "rapport", "stat_descriptive", "analyse", "series_temporelles", "conversation"}
         return intent if intent in valid else "conversation"

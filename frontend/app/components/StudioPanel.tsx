@@ -31,6 +31,45 @@ const STUDIO_ITEMS_SOON = [
 type ReportFormat = "pdf" | "word" | null;
 type TrainingType = "classification" | "regression" | "prediction" | null;
 
+interface ModelFeasibility {
+  classification: boolean;
+  regression: boolean;
+  prediction: boolean;
+}
+
+const NO_FEASIBILITY: ModelFeasibility = { classification: false, regression: false, prediction: false };
+
+// Estime, à partir du profil ydata-profiling sauvegardé pour la session,
+// quels types de modèles ont une chance raisonnable de fonctionner sur ce
+// jeu de données (sans lancer d'entraînement réel).
+function computeModelFeasibility(sessionType: string | null, profile: Record<string, unknown> | null, stats: Record<string, unknown> | null): ModelFeasibility {
+  if (sessionType !== "tabular" || !profile || !stats) return NO_FEASIBILITY;
+
+  const rows = typeof profile.rows === "number" ? profile.rows : 0;
+  const variables = (stats.variables as Record<string, { type?: string; n_valeurs_distinctes?: number }>) || {};
+
+  let numericCols = 0;
+  let categoricalTargets = 0;
+  for (const v of Object.values(variables)) {
+    if (v.type === "Numeric") {
+      numericCols++;
+    } else if (
+      (v.type === "Categorical" || v.type === "Boolean") &&
+      typeof v.n_valeurs_distinctes === "number" &&
+      v.n_valeurs_distinctes >= 2 &&
+      v.n_valeurs_distinctes <= 20
+    ) {
+      categoricalTargets++;
+    }
+  }
+
+  const enoughRows = rows >= 20;
+  const classification = enoughRows && categoricalTargets >= 1 && numericCols + categoricalTargets >= 2;
+  const regression = enoughRows && numericCols >= 2;
+
+  return { classification, regression, prediction: classification || regression };
+}
+
 type GeneratedItem = {
   id: string;
   title: string;
@@ -56,6 +95,8 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
   const [isTrainingModel, setIsTrainingModel] = useState(false);
   const [placeholderIndex, setPlaceholderIndex] = useState(0);
   const [generatedItems, setGeneratedItems] = useState<GeneratedItem[]>([]);
+  const [feasibility, setFeasibility] = useState<ModelFeasibility>(NO_FEASIBILITY);
+  const anyModelPossible = feasibility.classification || feasibility.regression || feasibility.prediction;
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -67,6 +108,29 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
 
   useEffect(() => {
     setGeneratedItems([]);
+  }, [sessionId]);
+
+  // Détermine quels types de modèles sont proposables pour le dataset de la
+  // session courante (sans lancer d'entraînement réel).
+  useEffect(() => {
+    if (!sessionId) {
+      setFeasibility(NO_FEASIBILITY);
+      return;
+    }
+    let cancelled = false;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    fetch(`${apiUrl}/api/sessions/${sessionId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setFeasibility(computeModelFeasibility(data.type ?? null, data.data_profile ?? null, data.data_stats ?? null));
+      })
+      .catch(() => {
+        if (!cancelled) setFeasibility(NO_FEASIBILITY);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId]);
 
   const addGeneratedItem = (item: GeneratedItem) => {
@@ -263,27 +327,34 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
           ))}
 
           <GlareHover
-            onClick={openTrainingModal}
+            onClick={() => { if (sessionId && anyModelPossible) openTrainingModal(); }}
             background="var(--bubble-ai)"
             borderColor="var(--border-color)"
             borderRadius="14px"
-            glareOpacity={0.3}
+            glareOpacity={sessionId && anyModelPossible ? 0.3 : 0}
             style={{
               gridColumn: "1 / -1",
               padding: "15px 16px",
-              cursor: "pointer",
+              cursor: sessionId && anyModelPossible ? "pointer" : "not-allowed",
               minHeight: "72px",
               display: "flex",
               alignItems: "center",
               gap: "12px",
+              opacity: sessionId && anyModelPossible ? 1 : 0.5,
             }}
-            onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-user)')}
+            onMouseEnter={(e) => { if (sessionId && anyModelPossible) (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-user)'); }}
             onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-ai)')}
           >
             <span style={{ display: "grid", placeItems: "center", width: "38px", height: "38px", borderRadius: "12px", color: "var(--accent-color)", background: "var(--accent-soft)" }}><BrainCircuit size={21} strokeWidth={1.7} /></span>
             <div>
               <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-main)" }}>Entraîner un modèle</div>
-              <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>Créer et suivre vos modèles prédictifs</div>
+              <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "2px" }}>
+                {!sessionId
+                  ? "Chargez d'abord un jeu de données."
+                  : anyModelPossible
+                    ? "Créer et suivre vos modèles prédictifs"
+                    : "Aucun modèle compatible avec ce jeu de données."}
+              </div>
             </div>
           </GlareHover>
         </div>
@@ -411,16 +482,41 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-main)" }}>Type de modèle</label>
-            <select
-              value={trainingType || ""}
-              onChange={(event) => setTrainingType(event.target.value as TrainingType)}
-              style={{ padding: "10px 12px", borderRadius: "10px", border: "1px solid var(--border-muted)", background: "var(--bubble-ai)", color: "var(--text-main)" }}
-            >
-              <option value="">Sélectionner</option>
-              <option value="classification">Classification</option>
-              <option value="regression">Régression</option>
-              <option value="prediction">Prédiction</option>
-            </select>
+            <div style={{ display: "flex", gap: "10px" }}>
+              {(
+                [
+                  { id: "classification" as const, label: "Classification", possible: feasibility.classification },
+                  { id: "regression" as const, label: "Régression", possible: feasibility.regression },
+                  { id: "prediction" as const, label: "Prédiction", possible: feasibility.prediction },
+                ]
+              ).map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  disabled={!opt.possible}
+                  onClick={() => setTrainingType(opt.id)}
+                  title={opt.possible ? undefined : "Ce jeu de données n'a pas les colonnes nécessaires pour ce type de modèle."}
+                  style={{
+                    flex: 1,
+                    padding: "10px 12px",
+                    borderRadius: "10px",
+                    border: trainingType === opt.id ? "1px solid var(--accent-color)" : "1px solid var(--border-muted)",
+                    background: trainingType === opt.id ? "var(--accent-soft)" : "var(--bubble-ai)",
+                    color: "var(--text-main)",
+                    fontWeight: 600,
+                    cursor: opt.possible ? "pointer" : "not-allowed",
+                    opacity: opt.possible ? 1 : 0.4,
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {!anyModelPossible && (
+              <small style={{ color: "var(--text-muted)", fontSize: "11px" }}>
+                Aucun type de modèle n’est compatible avec ce jeu de données (il faut par exemple au moins 20 lignes et plusieurs colonnes numériques ou catégorielles adaptées).
+              </small>
+            )}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-main)" }}>Nom du modèle</label>

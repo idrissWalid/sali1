@@ -60,7 +60,6 @@ def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None)
         "--cpus=0.5",             # limite CPU
         "--read-only",            # FS en lecture seule
         "--tmpfs", "/tmp:rw,size=64m,noexec",  # /tmp en RAM pour les graphiques
-        "--security-opt", "no-new-privileges",
         SANDBOX_IMAGE,
     ]
 

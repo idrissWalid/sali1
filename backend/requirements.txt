@@ -28,4 +28,7 @@ timecopilot
 tf-keras
 openai-whisper
 soundfile
-torch>=2.6.0
+torch<2.12.0
+certifi
+colpali-engine
+pymupdf

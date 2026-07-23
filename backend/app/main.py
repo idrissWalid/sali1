@@ -6,6 +6,7 @@ from app.api.upload import router as upload_router
 from app.api.report import router as report_router
 from app.api.session import router as session_router
 from app.api.audio import router as audio_router
+from app.api.settings import router as settings_router
 from app.core.database import init_db
 
 # Initialisation de la base de données SQLite
@@ -33,6 +34,7 @@ app.include_router(report_router, prefix="/api")
 app.include_router(session_router, prefix="/api")
 app.include_router(audio_router, prefix="/api")
 app.include_router(models_router, prefix="/api")
+app.include_router(settings_router, prefix="/api")
 
 @app.get("/")
 async def root():

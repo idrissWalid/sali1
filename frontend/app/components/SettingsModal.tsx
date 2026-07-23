@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Modal from "./Modal";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -14,17 +14,19 @@ interface SettingsModalProps {
   proprietaryModels?: string[];
   selectedModel?: string;
   onModelChange?: (model: string) => void;
+  onModelsRefetch?: () => void;
 }
 
 type TabType = "general" | "model" | "rag";
 
-export default function SettingsModal({ 
-  isOpen, 
-  onClose, 
-  models = [], 
-  proprietaryModels = [], 
-  selectedModel = "", 
-  onModelChange 
+export default function SettingsModal({
+  isOpen,
+  onClose,
+  models = [],
+  proprietaryModels = [],
+  selectedModel = "",
+  onModelChange,
+  onModelsRefetch,
 }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<TabType>("general");
 
@@ -44,6 +46,34 @@ export default function SettingsModal({
   const [apiProvider, setApiProvider] = useState("gemini");
   const [apiModelName, setApiModelName] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [apiSaving, setApiSaving] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
+
+  // Charge la liste des fournisseurs et de leurs modèles disponibles dès
+  // l'ouverture de la boîte de dialogue "Configuration API".
+  useEffect(() => {
+    if (!isApiDialogOpen) return;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    fetch(`${apiUrl}/api/settings/providers`)
+      .then((res) => res.json())
+      .then((data) => {
+        const map: Record<string, string[]> = {};
+        for (const p of data.providers || []) {
+          map[p.id] = p.models || [];
+        }
+        setProviderModels(map);
+      })
+      .catch((err) => console.error("Erreur lors du chargement des fournisseurs:", err));
+  }, [isApiDialogOpen]);
+
+  // Toujours garder un modèle sélectionné cohérent avec le fournisseur choisi.
+  useEffect(() => {
+    const available = providerModels[apiProvider] || [];
+    if (available.length > 0 && !available.includes(apiModelName)) {
+      setApiModelName(available[0]);
+    }
+  }, [apiProvider, providerModels, apiModelName]);
 
   const clearCache = () => {
     alert("Base de données vectorielle et cache vidés avec succès !");
@@ -320,19 +350,45 @@ export default function SettingsModal({
     )}
 
     <Modal isOpen={isApiDialogOpen} onClose={() => setIsApiDialogOpen(false)} title="Configuration API" maxWidth="440px">
-        <form className="flex flex-col gap-5" onSubmit={(e) => {
+        <form className="flex flex-col gap-5" onSubmit={async (e) => {
           e.preventDefault();
-          setIsApiDialogOpen(false);
-          // Optional: set the API model as the active one visually
-          setAiModel(apiModelName);
-          if (onModelChange) {
-            onModelChange(apiModelName);
+          setApiError(null);
+          setApiSaving(true);
+          try {
+            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+            const res = await fetch(`${apiUrl}/api/settings/api-key`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ provider: apiProvider, model: apiModelName, api_key: apiKey }),
+            });
+            if (!res.ok) {
+              const data = await res.json().catch(() => null);
+              throw new Error(data?.detail || "Échec de l'enregistrement de la clé API.");
+            }
+
+            // Gemini garde son nom nu (rétrocompatibilité), les autres fournisseurs
+            // sont préfixés "provider/model" pour le routage backend.
+            const composedModel = apiProvider === "gemini" ? apiModelName : `${apiProvider}/${apiModelName}`;
+            setAiModel(composedModel);
+            if (onModelChange) {
+              onModelChange(composedModel);
+            }
+            if (onModelsRefetch) {
+              onModelsRefetch();
+            }
+
+            setApiKey("");
+            setIsApiDialogOpen(false);
+            setShowToast(true);
+            setTimeout(() => setShowToast(false), 2000);
+          } catch (err) {
+            setApiError(err instanceof Error ? err.message : "Erreur inconnue.");
+          } finally {
+            setApiSaving(false);
           }
-          setShowToast(true);
-          setTimeout(() => setShowToast(false), 2000);
         }}>
           <p className="-mt-2 text-sm leading-6 text-[var(--text-muted)]">
-            Entrez les informations de votre fournisseur pour utiliser un modèle via API.
+            Entrez les informations de votre fournisseur pour utiliser un modèle via API. La clé est testée avec une petite requête avant d’être enregistrée côté serveur (backend/.env).
           </p>
           <div className="grid gap-4">
             <div className="grid gap-3">
@@ -353,20 +409,32 @@ export default function SettingsModal({
               >
                 <option value="gemini">Gemini</option>
                 <option value="mistral">Mistral</option>
-                <option value="anthropic">Anthropic</option>
+                <option value="anthropic">Claude (Anthropic)</option>
                 <option value="openai">OpenAI</option>
+                <option value="groq">Groq</option>
               </select>
             </div>
             <div className="grid gap-3">
               <Label htmlFor="api-model">Modèle</Label>
-              <Input
+              <select
                 id="api-model"
                 value={apiModelName}
                 onChange={(e) => setApiModelName(e.target.value)}
-                placeholder="ex: gpt-4o, claude-3-sonnet..."
-                style={{ background: "var(--bg-app)", color: "var(--text-main)", borderColor: "var(--border-color)" }}
                 required
-              />
+                style={{
+                  padding: "8px 12px",
+                  borderRadius: "6px",
+                  border: "1px solid var(--border-color)",
+                  background: "var(--bg-app)",
+                  color: "var(--text-main)",
+                  outline: "none",
+                  fontSize: "13px",
+                }}
+              >
+                {(providerModels[apiProvider] || []).map((m) => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
             </div>
             <div className="grid gap-3">
               <Label htmlFor="api-key">Clé API</Label>
@@ -375,18 +443,21 @@ export default function SettingsModal({
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder="sk-..."
+                placeholder="x7K9pL2mQ8vR4tY1nZ6bW3jD5hF0sA2c"
                 style={{ background: "var(--bg-app)", color: "var(--text-main)", borderColor: "var(--border-color)" }}
                 required
               />
             </div>
+            {apiError && (
+              <div style={{ color: "#ea4335", fontSize: "12px" }}>{apiError}</div>
+            )}
           </div>
           <div className="flex flex-col-reverse gap-2 border-t border-[var(--border-muted)] pt-4 sm:flex-row sm:justify-end">
             <Button variant="outline" type="button" onClick={() => setIsApiDialogOpen(false)} style={{ color: "var(--text-main)", borderColor: "var(--border-color)" }}>
               Annuler
             </Button>
-            <Button type="submit" style={{ background: "var(--accent-color)", color: "var(--bg-app)" }}>
-              Enregistrer
+            <Button type="submit" disabled={apiSaving || !apiModelName} style={{ background: "var(--accent-color)", color: "var(--bg-app)" }}>
+              {apiSaving ? "Vérification de la clé..." : "Enregistrer"}
             </Button>
           </div>
         </form>

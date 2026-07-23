@@ -40,26 +40,31 @@ async def chat(request: ChatRequest):
     sources = []
 
     # ── Chemin B : documents ───────────────────────────────────
-    if session_type == "document":
+    if session_type == "document_visual":
+        from app.services.colsmolvlm_service import retrieve_visual_pages
+        from app.services.gemini_service import ask_gemini_vision
+
+        pages = retrieve_visual_pages(request.session_id, request.message)
+        sources = [{"page": p["page"], "text": ""} for p in pages]
+        prompt = f"""
+Question : {request.message}
+Réponds uniquement à partir des pages du document ci-jointes.
+"""
+        response = ask_gemini_vision(prompt, [p["image_bytes"] for p in pages], history=history)
+
+    elif session_type == "document":
         from app.services.rag_service import retrieve_context_with_sources
         context, sources = retrieve_context_with_sources(request.session_id, request.message)
         prompt = f"""
-Extraits du document pertinents :
+Extraits du document pertinents (numérotés) :
 {context}
 
 Question : {request.message}
 Réponds uniquement à partir du document.
+
+Après chaque affirmation qui s'appuie sur un extrait ci-dessus, ajoute immédiatement sa référence entre crochets (ex: [1]), en utilisant le numéro de l'extrait correspondant [Source N]. Si une affirmation combine plusieurs extraits, répète les crochets (ex: [1][2]). N'invente jamais de numéro qui ne correspond à aucun extrait fourni, et n'ajoute pas de liste de sources séparée à la fin : les références doivent être insérées directement dans le texte, au fil de la réponse.
 """
-        if not request.model or request.model.startswith("gemini"):
-            response = ask_gemini(prompt=prompt, history=history, model=request.model)
-        else:
-            from app.services.ollama_service import ask_ollama
-            full_prompt = ""
-            for msg in history[-5:]:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                full_prompt += f"{role}: {msg['content']}\n"
-            full_prompt += prompt
-            response = ask_ollama(prompt=full_prompt, model=request.model)
+        response = ask_gemini(prompt=prompt, history=history, model=request.model)
 
     # ── Chemin A : données tabulaires ─────────────────────────
     else:
@@ -81,7 +86,7 @@ Réponds uniquement à partir du document.
 
             if file_bytes:
                 from app.services.pandasai_service import ask_pandasai
-                result = ask_pandasai(file_bytes, filename, request.message)
+                result = ask_pandasai(file_bytes, filename, request.message, model=request.model)
 
                 if result["error"]:
                     # Fallback : Gemini répond avec le contexte stats
@@ -204,7 +209,8 @@ Explique les tendances temporelles ou les prévisions identifiées.
                             metrics_str,
                             data_context,
                             len(images) > 0,
-                            history
+                            history,
+                            request.model
                         )
                     else:
                         interp_prompt = f"""
@@ -216,39 +222,21 @@ Rédige une interprétation concise et claire en 2-4 phrases.
 """
                         response = ask_gemini(prompt=interp_prompt, history=history, model=request.model)
             else:
-                if not request.model or request.model.startswith("gemini"):
-                    response = ask_gemini(
-                        prompt=request.message,
-                        history=history,
-                        data_context=data_context,
-                        model=request.model
-                    )
-                else:
-                    from app.services.ollama_service import ask_ollama
-                    full_prompt = f"{data_context}\n\n" if data_context else ""
-                    for msg in history[-5:]:
-                        role = "User" if msg["role"] == "user" else "Assistant"
-                        full_prompt += f"{role}: {msg['content']}\n"
-                    full_prompt += f"Question : {request.message}"
-                    response = ask_ollama(prompt=full_prompt, model=request.model)
-
-        else:
-            # Conversation générale
-            if not request.model or request.model.startswith("gemini"):
                 response = ask_gemini(
                     prompt=request.message,
                     history=history,
                     data_context=data_context,
                     model=request.model
                 )
-            else:
-                from app.services.ollama_service import ask_ollama
-                full_prompt = f"{data_context}\n\n" if data_context else ""
-                for msg in history[-5:]:
-                    role = "User" if msg["role"] == "user" else "Assistant"
-                    full_prompt += f"{role}: {msg['content']}\n"
-                full_prompt += f"Question : {request.message}"
-                response = ask_ollama(prompt=full_prompt, model=request.model)
+
+        else:
+            # Conversation générale
+            response = ask_gemini(
+                prompt=request.message,
+                history=history,
+                data_context=data_context,
+                model=request.model
+            )
 
     add_to_history(request.session_id, "model", response)
     save_message_to_report(request.session_id, "assistant", response, images, sources)

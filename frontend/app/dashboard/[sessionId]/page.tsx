@@ -255,7 +255,7 @@ export default function DashboardPage() {
                     <Tooltip
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
                     />
-                    <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} dot={{r: 4, fill: '#3b82f6'}} />
+                    <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} dot={false} activeDot={{ r: 4, fill: '#3b82f6' }} />
                   </LineChart>
                 </ResponsiveContainer>
               ) : null}

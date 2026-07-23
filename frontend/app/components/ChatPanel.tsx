@@ -29,8 +29,51 @@ interface Props {
 }
 
 // Helper pour parser le gras et le code inline
-function renderInlineMarkdown(text: string): ReactNode[] {
-  const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
+type SourceRef = { page: number; text: string };
+
+// Rend une citation inline "[n]" (insérée par le LLM) en badge cliquable qui
+// ouvre l'extrait source correspondant (msg.sources[n-1]). Sans sources
+// disponibles, le texte "[n]" reste affiché tel quel.
+function renderCitation(part: string, key: number, sources?: SourceRef[], onSourceClick?: (src: SourceRef) => void): ReactNode {
+  const match = part.match(/^\[(\d+)\]$/);
+  const index = match ? parseInt(match[1], 10) : NaN;
+  const source = sources && index >= 1 ? sources[index - 1] : undefined;
+
+  if (!source || !onSourceClick) {
+    return <span key={key}>{part}</span>;
+  }
+
+  return (
+    <button
+      key={key}
+      onClick={() => onSourceClick(source)}
+      title={`Voir la source (page ${source.page})`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        minWidth: "15px",
+        height: "15px",
+        padding: "0 4px",
+        margin: "0 1px",
+        borderRadius: "999px",
+        border: "1px solid var(--accent-color)",
+        background: "var(--accent-soft)",
+        color: "var(--accent-color)",
+        fontSize: "10px",
+        fontWeight: 700,
+        lineHeight: 1,
+        verticalAlign: "super",
+        cursor: "pointer",
+      }}
+    >
+      {index}
+    </button>
+  );
+}
+
+function renderInlineMarkdown(text: string, sources?: SourceRef[], onSourceClick?: (src: SourceRef) => void): ReactNode[] {
+  const parts = text.split(/(\*\*.*?\*\*|`.*?`|\[\d+\])/g);
   return parts.map((part, j) => {
     if (part.startsWith("**") && part.endsWith("**")) {
       return <strong key={j} style={{ fontWeight: 600, color: "var(--text-main)" }}>{part.slice(2, -2)}</strong>;
@@ -47,6 +90,9 @@ function renderInlineMarkdown(text: string): ReactNode[] {
           {part.slice(1, -1)}
         </code>
       );
+    }
+    if (/^\[\d+\]$/.test(part)) {
+      return renderCitation(part, j, sources, onSourceClick);
     }
     return <span key={j}>{part}</span>;
   });
@@ -127,10 +173,21 @@ function renderTable(headerCells: string[], alignCells: string[], rows: string[]
 }
 
 // ── Rendu markdown amélioré ──────────────────────────────────
-function renderMarkdown(text: string, onPropositionClick?: (text: string) => void): ReactNode[] {
+// `section` permet de scinder le texte en deux blocs : le contenu principal
+// ("content") et les suggestions/propositions détectées en fin de réponse
+// ("suggestions"), pour pouvoir intercaler les graphiques entre les deux.
+function renderMarkdown(
+  text: string,
+  onPropositionClick?: (text: string) => void,
+  section: "all" | "content" | "suggestions" = "all",
+  sources?: SourceRef[],
+  onSourceClick?: (src: SourceRef) => void
+): ReactNode[] {
   const lines = text.split("\n");
   let inPropositions = false;
   const nodes: ReactNode[] = [];
+  const shouldInclude = () =>
+    section === "all" || (section === "content" ? !inPropositions : inPropositions);
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -147,7 +204,7 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
           rows.push(splitTableRow(lines[j]));
           j++;
         }
-        nodes.push(renderTable(headerCells, alignCells, rows, `table-${i}`));
+        if (shouldInclude()) nodes.push(renderTable(headerCells, alignCells, rows, `table-${i}`));
         i = j - 1;
         continue;
       }
@@ -196,7 +253,7 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
         lineHeight: 1.4,
       };
 
-      nodes.push(<HeaderTag key={i} style={style}>{renderInlineMarkdown(content)}</HeaderTag>);
+      if (shouldInclude()) nodes.push(<HeaderTag key={i} style={style}>{renderInlineMarkdown(content, sources, onSourceClick)}</HeaderTag>);
       continue;
     }
 
@@ -217,52 +274,56 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
 
       if (inPropositions && onPropositionClick) {
         // En mode proposition, on rend une bulle cliquable
-        nodes.push(
-          <div
-            key={i}
-            onClick={() => onPropositionClick(listContent.replace(/\*\*/g, ""))} // Enlève le gras pour l'input
-            style={{
-              margin: "8px 0 8px 12px",
-              padding: "10px 14px",
-              background: "var(--bg-app)",
-              border: "1px solid var(--accent-color)",
-              borderRadius: "14px",
-              color: "var(--accent-color)",
-              fontSize: "13px",
-              fontWeight: 500,
-              cursor: "pointer",
-              transition: "all 0.2s",
-              display: "inline-block",
-              width: "fit-content",
-              maxWidth: "95%",
-            }}
-            onMouseEnter={e => {
-              e.currentTarget.style.background = "var(--accent-color)";
-              e.currentTarget.style.color = "var(--bg-app)";
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.background = "var(--bg-app)";
-              e.currentTarget.style.color = "var(--accent-color)";
-            }}
-          >
-            {renderInlineMarkdown(listContent)}
-          </div>
-        );
+        if (shouldInclude()) {
+          nodes.push(
+            <div
+              key={i}
+              onClick={() => onPropositionClick(listContent.replace(/\*\*/g, ""))} // Enlève le gras pour l'input
+              style={{
+                margin: "8px 0 8px 12px",
+                padding: "10px 14px",
+                background: "var(--bg-app)",
+                border: "1px solid var(--accent-color)",
+                borderRadius: "14px",
+                color: "var(--accent-color)",
+                fontSize: "13px",
+                fontWeight: 500,
+                cursor: "pointer",
+                transition: "all 0.2s",
+                display: "inline-block",
+                width: "fit-content",
+                maxWidth: "95%",
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = "var(--accent-color)";
+                e.currentTarget.style.color = "var(--bg-app)";
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = "var(--bg-app)";
+                e.currentTarget.style.color = "var(--accent-color)";
+              }}
+            >
+              {renderInlineMarkdown(listContent, sources, onSourceClick)}
+            </div>
+          );
+        }
         continue;
       }
 
-      nodes.push(
-        <div key={i} style={{ display: "flex", gap: "8px", margin: "6px 0 6px 12px", alignItems: "flex-start" }}>
-          <span style={{ color: "var(--accent-color)", fontWeight: numMatch ? "bold" : "normal", fontSize: numMatch ? "13px" : "inherit", marginTop: numMatch ? "0" : "1px" }}>{prefix}</span>
-          <span style={{ flex: 1 }}>{renderInlineMarkdown(listContent)}</span>
-        </div>
-      );
+      if (shouldInclude()) {
+        nodes.push(
+          <div key={i} style={{ display: "flex", gap: "8px", margin: "6px 0 6px 12px", alignItems: "flex-start" }}>
+            <span style={{ color: "var(--accent-color)", fontWeight: numMatch ? "bold" : "normal", fontSize: numMatch ? "13px" : "inherit", marginTop: numMatch ? "0" : "1px" }}>{prefix}</span>
+            <span style={{ flex: 1 }}>{renderInlineMarkdown(listContent, sources, onSourceClick)}</span>
+          </div>
+        );
+      }
       continue;
     }
 
     // 4. Paragraphe classique ou ligne vide
     if (cleanLine === "") {
-      nodes.push(<div key={i} style={{ height: "8px" }} />);
+      if (shouldInclude()) nodes.push(<div key={i} style={{ height: "8px" }} />);
       continue;
     }
 
@@ -277,11 +338,13 @@ function renderMarkdown(text: string, onPropositionClick?: (text: string) => voi
       inPropositions = true;
     }
 
-    nodes.push(
-      <p key={i} style={{ margin: "4px 0" }}>
-        {renderInlineMarkdown(line)}
-      </p>
-    );
+    if (shouldInclude()) {
+      nodes.push(
+        <p key={i} style={{ margin: "4px 0" }}>
+          {renderInlineMarkdown(line, sources, onSourceClick)}
+        </p>
+      );
+    }
   }
 
   return nodes;
@@ -644,7 +707,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                   typingDone.has(i) ? (
                     // Typing terminé → rendu markdown
                     <div>
-                      {renderMarkdown(msg.text, sendMessage)}
+                      {renderMarkdown(msg.text, sendMessage, "content", msg.sources, setSelectedSource)}
                       {msg.isSummary && (
                         <button
                           onClick={() => window.open(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/dashboard/${sessionId}`, "_blank")}
@@ -673,6 +736,29 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                           </span> Voir le Dashboard interactif
                         </button>
                       )}
+
+                      {/* Images générées par la sandbox — avant les suggestions */}
+                      {msg.images && msg.images.length > 0 && (
+                        <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                          {msg.images.map((img, j) => (
+                            <ImageZoom
+                              key={j}
+                              style={{
+                                width: "100%",
+                                borderRadius: "10px",
+                                border: "1px solid var(--border-color)",
+                              }}
+                            >
+                              <Image
+                                src={`data:image/png;base64,${img}`}
+                                alt={`Visualisation ${j + 1}`}
+                              />
+                            </ImageZoom>
+                          ))}
+                        </div>
+                      )}
+
+                      {renderMarkdown(msg.text, sendMessage, "suggestions")}
 
                       {/* Sources cliquables */}
                       {msg.sources && msg.sources.length > 0 && (
@@ -733,7 +819,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                       typingSpeed={5}
                       showCursor={true}
                       cursorCharacter="|"
-                      renderText={(text) => renderMarkdown(text, sendMessage)}
+                      renderText={(text) => renderMarkdown(text, sendMessage, "all", msg.sources, setSelectedSource)}
                       onComplete={() => {
                         setTypingDone(prev => new Set([...prev, i]));
                       }}
@@ -741,27 +827,6 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                   )
                 ) : (
                   msg.text
-                )}
-
-                {/* Images générées par la sandbox */}
-                {msg.images && msg.images.length > 0 && (
-                  <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                    {msg.images.map((img, j) => (
-                      <ImageZoom
-                        key={j}
-                        style={{
-                          width: "100%",
-                          borderRadius: "10px",
-                          border: "1px solid var(--border-color)",
-                        }}
-                      >
-                        <Image
-                          src={`data:image/png;base64,${img}`}
-                          alt={`Visualisation ${j + 1}`}
-                        />
-                      </ImageZoom>
-                    ))}
-                  </div>
                 )}
               </div>
             </div>

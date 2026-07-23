@@ -104,7 +104,7 @@ export default function ModelDashboard({ params }: { params: { modelId: string }
   }
 
   return (
-    <div className="min-h-screen bg-[#111116] p-8 text-white">
+    <div className="dashboard-shell min-h-screen bg-[#111116] p-8 text-white">
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center gap-4 mb-8">
           <button onClick={() => router.back()} className="px-4 py-2 bg-[#1e1e24] hover:bg-[#26262e] rounded-lg transition-colors border border-[#2d2d3a]">

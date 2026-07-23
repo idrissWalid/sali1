@@ -101,6 +101,14 @@ html, body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+/* Le chat principal occupe un viewport fixe (overflow: hidden ci-dessus), mais
+   le dashboard est une page longue qui doit défiler : il devient son propre
+   conteneur de scroll indépendamment du body. */
+.dashboard-shell {
+  height: 100dvh;
+  overflow-y: auto;
+}
+
 @keyframes skeleton-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
@@ -379,10 +387,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   min-height: 0;
   flex: 1;
   display: grid;
-  place-items: center;
+  place-items: safe center;
   padding: 32px 24px 118px;
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
 }
 
 .chat-empty-message {

@@ -11,11 +11,9 @@ else:
     _GENAI_IMPORT_ERROR = None
 
 from app.services.ollama_service import ask_ollama
-from app.core.config import GEMINI_API_KEY
+from app.core import config
 
 logger = logging.getLogger("app.gemini")
-
-_client = None
 
 
 def _build_gemini_history(history: list) -> list:
@@ -34,20 +32,54 @@ def _build_gemini_history(history: list) -> list:
 
 
 def get_gemini_client():
-    global _client
-    if _client is None:
-        if _GENAI_IMPORT_ERROR is not None:
-            raise RuntimeError(f"Google GenAI indisponible : {_GENAI_IMPORT_ERROR}") from _GENAI_IMPORT_ERROR
-        if not GEMINI_API_KEY or GEMINI_API_KEY == "YOUR_GEMINI_API_KEY_HERE":
-            logger.error("GEMINI_API_KEY non configurée ou invalide. Vérifiez backend/.env ou la variable d'environnement.")
-            raise ValueError("Clé API Gemini manquante. Veuillez configurer GEMINI_API_KEY dans le fichier .env.")
-        try:
-            _client = genai.Client(api_key=GEMINI_API_KEY)
-            logger.info("Client Gemini initialisé avec succès.")
-        except Exception:
-            logger.exception("Échec lors de l'initialisation du client Gemini.")
-            raise
-    return _client
+    if _GENAI_IMPORT_ERROR is not None:
+        raise RuntimeError(f"Google GenAI indisponible : {_GENAI_IMPORT_ERROR}") from _GENAI_IMPORT_ERROR
+    api_key = config.get_api_key("gemini")
+    if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
+        logger.error("GEMINI_API_KEY non configurée ou invalide. Vérifiez backend/.env ou la variable d'environnement.")
+        raise ValueError("Clé API Gemini manquante. Veuillez configurer GEMINI_API_KEY dans le fichier .env.")
+    try:
+        return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=30000))
+    except Exception:
+        logger.exception("Échec lors de l'initialisation du client Gemini.")
+        raise
+
+
+def complete_text(prompt: str, model: str, history: list | None = None) -> str:
+    """Point d'entrée unique multi-fournisseur pour un prompt simple (sans le SYSTEM_PROMPT conversationnel).
+    Route vers Gemini / Mistral / OpenAI / Groq / Anthropic / Ollama selon le format de `model`.
+    Convention : "<provider>/<model>" pour les fournisseurs API (ex: "openai/gpt-4o-mini"),
+    nom nu préfixé "gemini" pour Gemini, sinon un modèle Ollama local (ex: "gemma2:latest").
+    """
+    history = history or []
+
+    if model and "/" in model:
+        provider, real_model = model.split("/", 1)
+        if provider == "mistral":
+            from app.services.mistral_service import complete as provider_complete
+        elif provider == "openai":
+            from app.services.openai_service import complete as provider_complete
+        elif provider == "groq":
+            from app.services.groq_service import complete as provider_complete
+        elif provider == "anthropic":
+            from app.services.anthropic_service import complete as provider_complete
+        else:
+            provider_complete = None
+        if provider_complete is not None:
+            return provider_complete(prompt, real_model, history=history).strip()
+
+    if not model or model.startswith("gemini"):
+        client = get_gemini_client()
+        gemini_history = _build_gemini_history(history)
+        chat = client.chats.create(model=model, history=gemini_history)
+        return chat.send_message(prompt).text.strip()
+
+    full_prompt = ""
+    for msg in history[-5:]:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        full_prompt += f"{role}: {msg['content']}\n"
+    full_prompt += prompt
+    return ask_ollama(full_prompt, model=model).strip()
 
 
 SYSTEM_PROMPT = """Tu es un agent d'analyse de données. Tu es proactif, clair et accessible.
@@ -69,12 +101,8 @@ def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: s
         gemini_history = _build_gemini_history(history)
 
         if model and not model.startswith("gemini"):
-            # Route vers Ollama
-            ollama_prompt = f"{full_prompt}\n\nHistorique récent:\n"
-            for msg in history[-5:]:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                ollama_prompt += f"{role}: {msg['content']}\n"
-            return ask_ollama(ollama_prompt, model=model)
+            # Route vers Mistral / OpenAI / Groq / Anthropic / Ollama
+            return complete_text(full_prompt, model, history)
 
         client = get_gemini_client()
         logger.debug("Envoyer requête Gemini — model=%s prompt_len=%d history_len=%d", model, len(full_prompt), len(gemini_history))
@@ -85,6 +113,26 @@ def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: s
     except Exception as e:
         logger.exception("Erreur lors de l'appel à Gemini : %s", str(e))
         return f"Erreur Gemini : {str(e)}"
+
+
+def ask_gemini_vision(prompt: str, images: list, history: list = []) -> str:
+    """Répond à une question en s'appuyant directement sur des images (ex: pages de
+    document scanné retrouvées par ColSmolVLM) — pas de texte OCR intermédiaire.
+    Nécessite un modèle Gemini (seul fournisseur multimodal câblé dans ce projet)."""
+    try:
+        full_prompt = SYSTEM_PROMPT + f"\n\nQuestion : {prompt}"
+        gemini_history = _build_gemini_history(history)
+
+        parts = [types.Part.from_bytes(data=img, mime_type="image/png") for img in images]
+        parts.append(types.Part.from_text(text=full_prompt))
+
+        client = get_gemini_client()
+        chat = client.chats.create(model="gemini-3.1-flash-lite-preview", history=gemini_history)
+        response = chat.send_message(parts)
+        return response.text
+    except Exception as e:
+        logger.exception("Erreur lors de l'appel vision à Gemini : %s", str(e))
+        return f"Erreur Gemini (vision) : {str(e)}"
 
 
 def generate_visualization_code(question: str, data_context: str, history: list = [], model: str = "gemini-3.1-flash-lite-preview") -> str:
@@ -117,12 +165,8 @@ IMPORTANT: Lors de tes analyses visuelles, PRIVILÉGIE l'utilisation de courbes 
         gemini_history = _build_gemini_history(history)
 
         if model and not model.startswith("gemini"):
-            # Route vers Ollama
-            ollama_prompt = f"{prompt}\n\nHistorique récent:\n"
-            for msg in history[-5:]:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                ollama_prompt += f"{role}: {msg['content']}\n"
-            code = ask_ollama(ollama_prompt, model=model).strip()
+            # Route vers Mistral / OpenAI / Groq / Anthropic / Ollama
+            code = complete_text(prompt, model, history).strip()
         else:
             client = get_gemini_client()
             chat = client.chats.create(

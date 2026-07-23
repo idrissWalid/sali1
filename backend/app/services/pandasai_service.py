@@ -1,68 +1,43 @@
 """
-pandasai_service.py — Statistiques descriptives via PandasAI v3 + Gemini.
+pandasai_service.py — Statistiques descriptives via PandasAI.
 
-PandasAI v3 utilise un LLM via l'interface pandasai.llm.base.LLM.
-On crée un wrapper GeminiLLM compatible avec cette interface pour utiliser
-le modèle Gemini déjà configuré dans le projet.
+Le paquet `pandasai` réellement installé dans ce projet est la version 0.4.0
+(API historique `PandasAI(llm=...).run(df, prompt)`) : la "v3" (`SmartDataframe`,
+`pandasai.config.Config`) visée par une version précédente de ce fichier n'existe
+pas dans cette installation, ce qui faisait échouer systématiquement l'import.
+
+RoutedLLM adapte l'interface `pandasai.llm.base.LLM` (v0.4.0) en délégant à
+`complete_text()` de gemini_service, qui route déjà vers Gemini / Ollama / Mistral /
+OpenAI / Groq / Anthropic selon le modèle choisi par l'utilisateur — pour que
+PandasAI respecte lui aussi ce choix au lieu d'être figé sur Gemini.
 """
 
-import io
-import os
 import base64
+import io
 import traceback
 from pathlib import Path
 
 import pandas as pd
+from pandasai.llm.base import LLM
 
-# Répertoire temporaire pour les charts PandasAI
-_CHARTS_DIR = Path("/tmp/pandasai_charts")
-_CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+from app.services.gemini_service import complete_text
 
 
-# ── Wrapper Gemini compatible avec PandasAI v3 ────────────────────────────────
+# ── Adaptateur LLM compatible avec pandasai 0.4.0 ─────────────────────────────
 
-class GeminiLLM:
-    """
-    Adaptateur minimal qui rend google-generativeai compatible
-    avec l'interface pandasai.llm.base.LLM (v3).
-    """
+class RoutedLLM(LLM):
+    """Délègue les appels PandasAI au routeur multi-fournisseur du projet."""
 
-    def __init__(self):
-        from google import genai
-        api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
-        self._client = genai.Client(api_key=api_key)
-        self._model_name = "gemini-1.5-flash"
+    def __init__(self, model: str):
+        self.model = model
 
-    # PandasAI v3 appelle call() avec un objet BasePrompt
-    def call(self, instruction, context=None) -> str:
-        try:
-            prompt_str = str(instruction)
-            response = self._client.models.generate_content(
-                model=self._model_name,
-                contents=prompt_str
-            )
-            return response.text
-        except Exception as exc:
-            raise RuntimeError(f"Gemini API error: {exc}") from exc
-
-    # generate_code utilisé par certains chemin de PandasAI v3
-    def generate_code(self, instruction, context=None) -> str:
-        raw = self.call(instruction, context)
-        # Nettoyer les blocs markdown si présents
-        if "```python" in raw:
-            raw = raw.split("```python")[1].split("```")[0]
-        elif "```" in raw:
-            raw = raw.split("```")[1].split("```")[0]
-        return raw.strip()
+    def call(self, instruction, value: str, suffix: str = "") -> str:
+        prompt = f"{instruction}{value}{suffix}"
+        return complete_text(prompt, self.model)
 
     @property
     def type(self) -> str:
-        return "gemini"
-
-    # Méthode attendue pour la vérification is_pandasai_llm
-    @staticmethod
-    def is_pandasai_llm() -> bool:
-        return True
+        return f"routed/{self.model}"
 
 
 # ── Chargement du DataFrame ───────────────────────────────────────────────────
@@ -77,14 +52,15 @@ def _load_df(file_bytes: bytes, filename: str) -> pd.DataFrame:
 
 # ── Service principal PandasAI ────────────────────────────────────────────────
 
-def ask_pandasai(file_bytes: bytes, filename: str, question: str) -> dict:
+def ask_pandasai(file_bytes: bytes, filename: str, question: str, model: str = "gemini-3.1-flash-lite-preview") -> dict:
     """
-    Répond à une question de statistiques descriptives via PandasAI v3.
+    Répond à une question de statistiques descriptives via PandasAI.
 
     Args:
         file_bytes: Contenu du fichier CSV/Excel
         filename:   Nom du fichier
         question:   Question en langage naturel
+        model:      Modèle sélectionné par l'utilisateur (routé via complete_text)
 
     Returns:
         dict:
@@ -105,26 +81,23 @@ def ask_pandasai(file_bytes: bytes, filename: str, question: str) -> dict:
         }
 
     try:
-        from pandasai import SmartDataframe
-        from pandasai.config import Config
+        from pandasai import PandasAI
 
-        llm = GeminiLLM()
-        config = Config(llm=llm, verbose=False, max_retries=2)
-
-        sdf = SmartDataframe(
-            df,
-            config=config,
-            description=f"DataFrame chargé depuis {filename}",
-        )
-
-        # Consigne en français explicite
+        agent = PandasAI(llm=RoutedLLM(model), verbose=False, enable_cache=False, save_charts=True)
         full_question = f"Réponds en français. {question}"
-        result = sdf.chat(full_question)
+        result = agent.run(df, full_question)
 
-        # Récupérer les graphiques éventuellement générés
+        if agent.last_error:
+            return {
+                "output": "",
+                "images": [],
+                "error": {
+                    "technical": agent.last_error,
+                    "simple": agent.last_error,
+                },
+            }
+
         images = _collect_charts()
-
-        # Convertir le résultat en string lisible
         output = _format_result(result)
 
         return {"output": output, "images": images, "error": None}
@@ -156,11 +129,15 @@ def _format_result(result) -> str:
 
 
 def _collect_charts() -> list:
-    """Récupère les graphiques PNG générés et les encode en base64."""
+    """Récupère les graphiques PNG générés par pandasai (sauvegardés sous
+    <site-packages>/exports/charts/<date>/ par le mécanisme save_charts) et les
+    encode en base64."""
+    import pandasai as _pandasai_pkg
+
     images = []
     try:
-        chart_files = sorted(_CHARTS_DIR.glob("*.png"))
-        for chart_path in chart_files:
+        charts_root = Path(_pandasai_pkg.__file__).resolve().parent.parent / "exports" / "charts"
+        for chart_path in sorted(charts_root.glob("*/*.png")):
             with open(chart_path, "rb") as f:
                 images.append(base64.b64encode(f.read()).decode("utf-8"))
             chart_path.unlink()

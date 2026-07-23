@@ -127,7 +127,7 @@ Propose 3 analyses concrètes et spécifiques que tu peux réaliser sur ces donn
 """
 
 
-async def analyze_tabular(file_bytes: bytes, filename: str) -> dict:
+async def analyze_tabular(file_bytes: bytes, filename: str, model: str = "gemini-3.1-flash-lite-preview") -> dict:
     from app.services.ingestion_service import load_tabular
     import pandas as pd
 
@@ -146,7 +146,7 @@ async def analyze_tabular(file_bytes: bytes, filename: str) -> dict:
     # Utilisation de ydata-profiling pour les statistiques descriptives
     stats = generate_profiling_stats(df)
     prompt = build_analysis_prompt(profile, stats)
-    interpretation = ask_gemini(prompt)
+    interpretation = ask_gemini(prompt, model=model)
 
     from app.services.session_service import save_initial_analysis
     return {

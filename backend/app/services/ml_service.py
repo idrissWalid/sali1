@@ -1,10 +1,5 @@
-from app.services.gemini_service import get_gemini_client
+from app.services.gemini_service import complete_text
 from app.services.model_specs import ModelFamily, MODEL_SPECS
-
-try:
-    from google.genai import types
-except Exception:  # pragma: no cover - optional dependency
-    types = None
 
 ML_KEYWORDS = [
     "prédis", "prédit", "prédire", "prédiction", "modèle", "entraîne",
@@ -17,7 +12,7 @@ def is_ml_request(message: str) -> bool:
     message_lower = message.lower()
     return any(kw in message_lower for kw in ML_KEYWORDS)
 
-def detect_model_family(question: str) -> ModelFamily:
+def detect_model_family(question: str, model: str = "gemma2:latest") -> ModelFamily:
     prompt = f"""
 Analyse la requête utilisateur suivante : '{question}'
 Détermine la famille de modèle Machine Learning la plus appropriée.
@@ -34,15 +29,7 @@ Si c'est pour grouper/segmenter -> clustering
 Si c'est pour réduire la dimension ou faire une ACP -> factor_analysis
     """
     try:
-        if model and model.startswith("gemini"):
-            client = get_gemini_client()
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt
-            )
-            val = response.text.strip().lower()
-        else:
-            val = ask_ollama(prompt, model=model).strip().lower()
+        val = complete_text(prompt, model).strip().lower()
 
         if val in [f.value for f in ModelFamily]:
             return ModelFamily(val)
@@ -81,32 +68,7 @@ Bibliothèques disponibles : pandas, numpy, matplotlib, seaborn,
 statsmodels, scikit-learn, joblib.
 """
     try:
-        gemini_history = []
-        for msg in history[-10:]:
-            role = "user" if msg["role"] == "user" else "model"
-            gemini_history.append(
-                types.Content(
-                    role=role,
-                    parts=[types.Part.from_text(text=msg["content"])]
-                )
-            )
-
-        if model and model.startswith("gemini"):
-            client = get_gemini_client()
-            chat = client.chats.create(
-                model=model,
-                history=gemini_history
-            )
-            response = chat.send_message(prompt)
-            code = response.text.strip()
-        else:
-            # Pour Ollama, on reformate l'historique
-            full_prompt = ""
-            for msg in history[-5:]:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                full_prompt += f"{role}: {msg['content']}\n"
-            full_prompt += prompt
-            code = ask_ollama(full_prompt, model=model).strip()
+        code = complete_text(prompt, model, history).strip()
         if code.startswith("```"):
             lines = code.split("\n")
             if lines[-1].startswith("```"):
@@ -137,30 +99,6 @@ Sois précis, concis, et accessible à un utilisateur standard.
 Réponds en français.
 """
     try:
-        gemini_history = []
-        for msg in history[-10:]:
-            role = "user" if msg["role"] == "user" else "model"
-            gemini_history.append(
-                types.Content(
-                    role=role,
-                    parts=[types.Part.from_text(text=msg["content"])]
-                )
-            )
-
-        if model and model.startswith("gemini"):
-            client = get_gemini_client()
-            chat = client.chats.create(
-                model=model,
-                history=gemini_history
-            )
-            response = chat.send_message(prompt)
-            return response.text.strip()
-        else:
-            full_prompt = ""
-            for msg in history[-5:]:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                full_prompt += f"{role}: {msg['content']}\n"
-            full_prompt += prompt
-            return ask_ollama(full_prompt, model=model).strip()
+        return complete_text(prompt, model, history).strip()
     except Exception as e:
         return "Interprétation indisponible."

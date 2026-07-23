@@ -108,6 +108,15 @@ def get_history(session_id: str) -> list:
         })
     return history
 
+def rename_session(session_id: str, title: str) -> bool:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE sessions SET title = ? WHERE id = ?", (title, session_id))
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
 def set_session_type(session_id: str, session_type: str):
     conn = get_db_connection()
     cursor = conn.cursor()

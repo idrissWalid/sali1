@@ -175,13 +175,19 @@ def retrieve_context_with_sources(session_id: str, question: str, top_k: int = 4
         metadatas = results["metadatas"][0]
 
         sources = []
-        for doc, meta in zip(fragments, metadatas):
+        numbered_fragments = []
+        for i, (doc, meta) in enumerate(zip(fragments, metadatas), start=1):
+            page = meta.get("page", 1)
             sources.append({
-                "page": meta.get("page", 1),
+                "page": page,
                 "text": doc
             })
+            # Numérotation alignée sur l'index (1-based) de `sources`, pour que
+            # le LLM puisse citer [1], [2]... et que le frontend fasse le lien
+            # avec le bon extrait cliquable.
+            numbered_fragments.append(f"[Source {i}] (page {page}) :\n{doc}")
 
-        context = "\n\n---\n\n".join(fragments)
+        context = "\n\n---\n\n".join(numbered_fragments)
         return context, sources
     except Exception:
         return "", []
@@ -192,12 +198,8 @@ def retrieve_context(session_id: str, question: str, top_k: int = 4) -> str:
 
 def _llm_summarize(prompt: str, model: str = "gemma2:latest") -> str:
     try:
-        from app.services.gemini_service import ask_gemini
-        from app.services.ollama_service import ask_ollama
-
-        if model and model.startswith("gemini"):
-            return ask_gemini(prompt, model=model)
-        return ask_ollama(prompt, model=model)
+        from app.services.gemini_service import complete_text
+        return complete_text(prompt, model)
     except Exception as e:
         print("LLM summarization failed:", e)
         return ""

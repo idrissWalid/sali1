@@ -7,8 +7,8 @@ from app.services.analysis_service import analyze_tabular
 from app.services.session_service import create_session, save_data_context, add_to_history
 from app.services.session_service import save_file_bytes
 from app.services.rag_service import index_document, summarize_document, get_document_chunks
-from app.services.gemini_service import ask_gemini
-from app.services.ollama_service import ask_ollama
+from app.services.gemini_service import complete_text
+from app.core.config import get_api_key, PROVIDER_MODELS
 
 router = APIRouter()
 
@@ -33,7 +33,7 @@ Ne commence pas par une introduction (pas de 'Bonjour', 'Voici', 'En tant que ..
 
 Résumé :
 """
-        summary = ask_gemini(prompt, model=model) if model and model.startswith("gemini") else ask_ollama(prompt, model=model)
+        summary = complete_text(prompt, model)
         batch_summaries.append(summary.strip())
 
     if len(batch_summaries) == 0:
@@ -50,7 +50,7 @@ Ne commence pas par des formules d'introduction ; va directement à l'essentiel.
 
 Résumé final :
 """
-    return ask_gemini(combined_prompt, model=model) if model and model.startswith("gemini") else ask_ollama(combined_prompt, model=model)
+    return complete_text(combined_prompt, model)
 
 @router.get("/llm-models")
 async def list_llm_models():
@@ -66,9 +66,19 @@ async def list_llm_models():
     if gemma_model:
         models.remove(gemma_model)
         models.insert(0, gemma_model)
+
+    proprietary = []
+    if get_api_key("gemini"):
+        proprietary.append("gemini-3.1-flash-lite-preview")
+    for provider, provider_models in PROVIDER_MODELS.items():
+        if provider == "gemini":
+            continue  # Déjà géré ci-dessus avec la convention de nom nu.
+        if get_api_key(provider):
+            proprietary.extend(f"{provider}/{m}" for m in provider_models)
+
     return {
         "models": models,
-        "proprietary": ["gemini-3.1-flash-lite-preview"]
+        "proprietary": proprietary
     }
 
 @router.post("/upload")
@@ -138,7 +148,7 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
             await asyncio.sleep(0.05)
 
             try:
-                result = await analyze_tabular(file_bytes, filename)
+                result = await analyze_tabular(file_bytes, filename, model=model)
                 if result.get("status") == "error":
                     yield json.dumps({
                         "status": "error",
@@ -186,7 +196,6 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
         if file_type == "document":
             from app.services.rag_service import index_document, summarize_document
             from app.services.gemini_service import ask_gemini
-            from app.services.ollama_service import ask_ollama
             from app.services.session_service import set_session_type
 
             # Étape 2 : Découpage et Indexation
@@ -233,10 +242,70 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
                     raw_context = " ".join(raw_context.split()[:2400])  # Prend environ le même nombre de mots que 6 chunks
 
                 if not raw_context.strip():
+                    # Aucun texte extractible (scan/photo) : fallback retrieval visuel via ColSmolVLM.
+                    # Les pages sont embarquées telles quelles (images), sans passer par de l'OCR.
+                    from app.services.colsmolvlm_service import index_visual_document, render_pdf_to_images
+                    from app.services.gemini_service import ask_gemini_vision
+                    from app.services.session_service import set_session_type as _set_session_type
+                    import io as _io
+
+                    visual_result = index_visual_document(session_id, file_bytes)
+                    if visual_result.get("status") != "ok":
+                        yield json.dumps({
+                            "status": "error",
+                            "message": "Le document ne contient pas de texte lisible et l'indexation visuelle (ColSmolVLM) a échoué.",
+                            "technical": visual_result.get("message", "Erreur ColSmolVLM inconnue.")
+                        }) + "\n"
+                        return
+
+                    _set_session_type(session_id, "document_visual")
+
+                    preview_images = render_pdf_to_images(file_bytes)[:4]
+                    preview_png_bytes = []
+                    for img in preview_images:
+                        buf = _io.BytesIO()
+                        img.save(buf, "PNG")
+                        preview_png_bytes.append(buf.getvalue())
+
+                    summary_prompt = """
+                    Voici les premières pages d'un document scanné (image).
+
+                    Rédige un résumé structuré, naturel et fluide en français à partir de ce que tu vois sur ces images.
+                    Ne commence JAMAIS le résumé par une introduction ou des salutations (par exemple : "Bonjour", "En tant qu'expert...", "Voici le résumé..."). Rentre directement dans le vif du sujet.
+
+                    Organise ta réponse sous cette forme :
+
+                    ### 1. RÉSUMÉ
+                    [Rédige un paragraphe de 3 à 5 phrases résumant le contenu général et l'objectif du document]
+
+                    ### 2. THÈMES PRINCIPAUX
+                    [Présente les grands thèmes abordés sous forme de liste à puces naturelle]
+
+                    ### 3. POINTS CLÉS
+                    [Présente 3 à 5 informations importantes sous forme de liste à puces naturelle]
+
+                    ### 4. PROPOSITIONS
+                    [Propose 3 questions ou analyses pertinentes suggérées par ce document]
+                    """
+                    summary = ask_gemini_vision(summary_prompt, preview_png_bytes)
+                    add_to_history(session_id, "model", summary)
+
                     yield json.dumps({
-                        "status": "error",
-                        "message": "Le document ne contient pas de texte lisible. Vérifiez qu'il est bien un PDF texte.",
-                        "technical": "No extractable text in PDF"
+                        "status": "processing",
+                        "step": 4,
+                        "message": "Finalisation et initialisation de la session..."
+                    }) + "\n"
+                    await asyncio.sleep(0.05)
+
+                    yield json.dumps({
+                        "status": "completed",
+                        "data": {
+                            "type": "document_analyzed",
+                            "session_id": session_id,
+                            "filename": filename,
+                            "chunks_indexed": 0,
+                            "summary": summary
+                        }
                     }) + "\n"
                     return
 
@@ -262,10 +331,7 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
                 ### 4. PROPOSITIONS
                 [Propose 3 questions ou analyses pertinentes suggérées par ce document]
                 """
-                if not model or model.startswith("gemini"):
-                    summary = ask_gemini(summary_prompt, model=model)
-                else:
-                    summary = ask_ollama(summary_prompt, model=model)
+                summary = ask_gemini(summary_prompt, model=model)
                 add_to_history(session_id, "model", summary)
 
                 # Étape 4 : Finalisation de la session

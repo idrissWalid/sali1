@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Geist } from "next/font/google";
 import { cn } from "@/lib/utils";
+import NgrokFetchPatch from "./components/NgrokFetchPatch";
 
 const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
@@ -24,6 +25,7 @@ export default function RootLayout({
         />
       </head>
       <body suppressHydrationWarning style={{ background: "#131314", color: "#e3e3e3", fontFamily: "'Roboto', sans-serif" }}>
+        <NgrokFetchPatch />
         {children}
       </body>
     </html>

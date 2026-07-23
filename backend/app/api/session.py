@@ -4,7 +4,7 @@ from typing import List, Optional, Any
 import json
 import os
 from app.core.database import get_db_connection
-from app.services.session_service import get_session
+from app.services.session_service import get_session, rename_session
 from app.services.rag_service import chroma_client
 
 router = APIRouter()
@@ -15,6 +15,9 @@ class SessionListItem(BaseModel):
     type: str
     filename: Optional[str] = None
     created_at: str
+
+class SessionRenameRequest(BaseModel):
+    title: str
 
 class MessageItem(BaseModel):
     role: str
@@ -84,6 +87,18 @@ async def get_session_details(session_id: str):
         data_preview=session["data_preview"],
         messages=messages
     )
+
+@router.patch("/sessions/{session_id}")
+async def rename_session_endpoint(session_id: str, request: SessionRenameRequest):
+    title = request.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Le titre ne peut pas être vide.")
+
+    updated = rename_session(session_id, title)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Session introuvable.")
+
+    return {"status": "ok", "title": title}
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):

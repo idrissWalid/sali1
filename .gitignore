@@ -34,3 +34,5 @@ backend/models/
 data/chroma/
 data/sessions.db
 data/uploads/
+cache.db
+backend/cache.db

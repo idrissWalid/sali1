@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { FileText, Plus, Table2, Trash2 } from "lucide-react";
+import { Check, FileText, Pencil, Plus, Table2, Trash2, X } from "lucide-react";
 
 interface SessionItem {
   id: string;
@@ -16,21 +16,56 @@ interface Props {
   currentSessionId: string | null;
   onSelectSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
+  onRenameSession?: (sessionId: string, title: string) => void;
   onNewSession: () => void;
   hideHeader?: boolean;
   style?: React.CSSProperties;
 }
+
+const actionButtonStyle: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  color: "var(--text-muted)",
+  fontSize: "16px",
+  cursor: "pointer",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "24px",
+  height: "24px",
+  borderRadius: "50%",
+  transition: "all 0.2s",
+};
 
 export default function Sidebar({
   sessions,
   currentSessionId,
   onSelectSession,
   onDeleteSession,
+  onRenameSession,
   onNewSession,
   hideHeader = false,
   style,
 }: Props) {
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
+
+  const startEditing = (session: SessionItem) => {
+    setEditingSessionId(session.id);
+    setEditingTitle(session.title || "");
+  };
+
+  const commitEditing = () => {
+    if (editingSessionId) {
+      onRenameSession?.(editingSessionId, editingTitle);
+    }
+    setEditingSessionId(null);
+  };
+
+  const cancelEditing = () => {
+    setEditingSessionId(null);
+  };
 
   const formatDate = (dateString: string) => {
     try {
@@ -157,6 +192,7 @@ export default function Sidebar({
             {sessions.map((session) => {
               const isActive = session.id === currentSessionId;
               const isHovered = session.id === hoveredSessionId;
+              const isEditing = session.id === editingSessionId;
 
               return (
                 <div
@@ -200,16 +236,46 @@ export default function Sidebar({
 
                   {/* Title & Metadata */}
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{
-                      fontSize: "13px",
-                      fontWeight: isActive ? 600 : 500,
-                      color: "var(--text-main)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}>
-                      {session.title || "Sans titre"}
-                    </div>
+                    {isEditing ? (
+                      <input
+                        autoFocus
+                        value={editingTitle}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setEditingTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            commitEditing();
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelEditing();
+                          }
+                        }}
+                        onBlur={commitEditing}
+                        style={{
+                          width: "100%",
+                          fontSize: "13px",
+                          fontWeight: 500,
+                          color: "var(--text-main)",
+                          background: "var(--bg-app)",
+                          border: "1px solid var(--accent-color)",
+                          borderRadius: "6px",
+                          padding: "2px 6px",
+                          outline: "none",
+                        }}
+                      />
+                    ) : (
+                      <div style={{
+                        fontSize: "13px",
+                        fontWeight: isActive ? 600 : 500,
+                        color: "var(--text-main)",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}>
+                        {session.title || "Sans titre"}
+                      </div>
+                    )}
                     <div style={{
                       fontSize: "11px",
                       color: "var(--text-dim)",
@@ -219,39 +285,85 @@ export default function Sidebar({
                     </div>
                   </div>
 
-                  {/* Actions (Delete button on hover) */}
-                  {(isHovered || isActive) && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDeleteSession(session.id);
-                      }}
-                      title="Supprimer la discussion"
-                      style={{
-                        background: "none",
-                        border: "none",
-                        color: "var(--text-muted)",
-                        fontSize: "16px",
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        width: "24px",
-                        height: "24px",
-                        borderRadius: "50%",
-                        transition: "all 0.2s",
-                      }}
-                      onMouseEnter={e => {
-                        e.currentTarget.style.background = "rgba(234,67,53,0.15)";
-                        e.currentTarget.style.color = "#ea4335";
-                      }}
-                      onMouseLeave={e => {
-                        e.currentTarget.style.background = "none";
-                        e.currentTarget.style.color = "var(--text-muted)";
-                      }}
-                    >
-                      <Trash2 size={14} strokeWidth={1.8} />
-                    </button>
+                  {/* Actions */}
+                  {isEditing ? (
+                    <div style={{ display: "flex", gap: "2px", flexShrink: 0 }}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          commitEditing();
+                        }}
+                        title="Valider"
+                        style={actionButtonStyle}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = "rgba(52,168,83,0.15)";
+                          e.currentTarget.style.color = "#34a853";
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = "none";
+                          e.currentTarget.style.color = "var(--text-muted)";
+                        }}
+                      >
+                        <Check size={14} strokeWidth={1.8} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          cancelEditing();
+                        }}
+                        title="Annuler"
+                        style={actionButtonStyle}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = "rgba(234,67,53,0.15)";
+                          e.currentTarget.style.color = "#ea4335";
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = "none";
+                          e.currentTarget.style.color = "var(--text-muted)";
+                        }}
+                      >
+                        <X size={14} strokeWidth={1.8} />
+                      </button>
+                    </div>
+                  ) : (isHovered || isActive) && (
+                    <div style={{ display: "flex", gap: "2px", flexShrink: 0 }}>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEditing(session);
+                        }}
+                        title="Renommer la discussion"
+                        style={actionButtonStyle}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = "var(--bubble-ai)";
+                          e.currentTarget.style.color = "var(--text-main)";
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = "none";
+                          e.currentTarget.style.color = "var(--text-muted)";
+                        }}
+                      >
+                        <Pencil size={14} strokeWidth={1.8} />
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDeleteSession(session.id);
+                        }}
+                        title="Supprimer la discussion"
+                        style={actionButtonStyle}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = "rgba(234,67,53,0.15)";
+                          e.currentTarget.style.color = "#ea4335";
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = "none";
+                          e.currentTarget.style.color = "var(--text-muted)";
+                        }}
+                      >
+                        <Trash2 size={14} strokeWidth={1.8} />
+                      </button>
+                    </div>
                   )}
                 </div>
               );

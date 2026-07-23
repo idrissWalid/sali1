@@ -1,8 +1,7 @@
 import io
 import base64
 from datetime import datetime
-from app.services.gemini_service import get_gemini_client
-from app.services.ollama_service import ask_ollama
+from app.services.gemini_service import complete_text
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
@@ -64,16 +63,8 @@ Retourne EXACTEMENT ce format JSON (sans markdown) :
 }}
 """
     try:
-        if model and model.startswith("gemini"):
-            client = get_gemini_client()
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt
-            )
-            text = response.text.strip()
-        else:
-            text = ask_ollama(prompt, model=model).strip()
-            
+        text = complete_text(prompt, model).strip()
+
         # Nettoyer les backticks si présents
         if text.startswith("```"):
             lines = text.split("\n")

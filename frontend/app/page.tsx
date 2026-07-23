@@ -80,12 +80,18 @@ export default function Home() {
   }, [theme]);
 
   useEffect(() => {
+    // Tant que la restauration initiale (lecture de active_session_id) n'est
+    // pas terminée, sessionId vaut encore null : ne pas effacer la valeur
+    // persistée sous peine de perdre la session avant même de l'avoir relue
+    // (cas typique : retour depuis /dashboard, qui remonte ce composant).
+    if (isPageLoading) return;
+
     if (sessionId) {
       localStorage.setItem("active_session_id", sessionId);
     } else {
       localStorage.removeItem("active_session_id");
     }
-  }, [sessionId]);
+  }, [sessionId, isPageLoading]);
 
   const fetchSessions = async () => {
     try {
@@ -173,6 +179,28 @@ export default function Home() {
       }
     } catch (err) {
       console.error("Erreur lors de la suppression de la session:", err);
+    }
+  };
+
+  const handleRenameSession = async (id: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+
+    // Mise à jour optimiste de la liste affichée
+    setSessions(prev => prev.map(s => (s.id === id ? { ...s, title: trimmed } : s)));
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const res = await fetch(`${apiUrl}/api/sessions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      if (!res.ok) throw new Error("Erreur serveur");
+    } catch (err) {
+      console.error("Erreur lors du renommage de la session:", err);
+      // En cas d'échec, on resynchronise avec le backend
+      fetchSessions();
     }
   };
 
@@ -473,6 +501,7 @@ export default function Home() {
                     currentSessionId={sessionId}
                     onSelectSession={handleSelectSession}
                     onDeleteSession={handleDeleteSession}
+                    onRenameSession={handleRenameSession}
                     onNewSession={handleNewSession}
                     hideHeader={true}
                   />
@@ -522,6 +551,7 @@ export default function Home() {
           setSelectedModel(m);
           localStorage.setItem("selected_model", m);
         }}
+        onModelsRefetch={fetchModels}
       />
       <ModelsModal isOpen={isModelsOpen} onClose={() => setIsModelsOpen(false)} sessionId={sessionId} />
       <ShareModal isOpen={isShareOpen} onClose={() => setIsShareOpen(false)} sourcesCount={sources.length} />

@@ -1,6 +1,5 @@
 from app.services.sandbox_service import execute_code, validate_output
-from app.services.gemini_service import get_gemini_client
-from app.services.ollama_service import ask_ollama
+from app.services.gemini_service import complete_text
 from app.services.model_specs import ModelSpec
 
 MAX_ATTEMPTS = 3
@@ -78,16 +77,8 @@ Le dataframe est dans la variable `df`.
 Réponds UNIQUEMENT avec le code Python corrigé, sans explication ni markdown.
 """
     try:
-        if model and model.startswith("gemini"):
-            client = get_gemini_client()
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt
-            )
-            corrected = response.text.strip()
-        else:
-            corrected = ask_ollama(prompt, model=model).strip()
-            
+        corrected = complete_text(prompt, model).strip()
+
         if corrected.startswith("```"):
             lines = corrected.split("\n")
             corrected = "\n".join(lines[1:-1])
