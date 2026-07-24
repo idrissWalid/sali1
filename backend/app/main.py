@@ -48,11 +48,19 @@ async def health():
     return {"status": "ok"}
 
 @app.get("/api/dashboard/data/{session_id}")
-async def get_dashboard_data_endpoint(session_id: str):
+async def get_dashboard_data_endpoint(session_id: str, dataset_id: str | None = None):
     from app.services.analysis_service import get_dashboard_data
     from fastapi import HTTPException
-    
-    data = await get_dashboard_data(session_id)
+
+    data = await get_dashboard_data(session_id, dataset_id=dataset_id)
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
     return data
+
+
+@app.get("/api/sessions/{session_id}/datasets")
+async def list_session_datasets(session_id: str):
+    """Jeux de données consultables dans une session (le dashboard s'en sert
+    pour alimenter son sélecteur)."""
+    from app.services.session_service import list_datasets
+    return {"datasets": list_datasets(session_id)}

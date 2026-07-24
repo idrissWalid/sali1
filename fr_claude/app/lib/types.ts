@@ -66,6 +66,17 @@ export interface DashboardData {
   };
   preview: Record<string, unknown>[];
   variables: Record<string, { type?: string; pct_manquantes?: number }>;
-  distributions: Record<string, { type: string; data: { name: string; value: number }[] }>;
+  distributions: Record<string, {
+    type: string;
+    /** Graphique choisi par le backend : histogram | bar | hbar | donut | line */
+    chart?: string;
+    /** Séries temporelles : granularités disponibles et points par granularité */
+    granularities?: { key: string; label: string; points: number }[];
+    default_granularity?: string;
+    series?: Record<string, { name: string; value: number; ts?: number }[]>;
+    data: { name: string; value: number; ts?: number }[];
+  }>;
+  datasets?: { id: string; name: string; filename?: string; source?: string; rows?: number; columns?: number }[];
+  dataset_id?: string;
   filename: string;
 }

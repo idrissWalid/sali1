@@ -9,7 +9,22 @@ import { ImageZoom, Image } from "./ImageZoom";
 import Modal from "./Modal";
 import { PlaceholdersAndVanishInput } from "./PlaceholdersAndVanishInput";
 import WelcomePanel from "./WelcomePanel";
-import { FileText, MoreVertical, Settings2 } from "lucide-react";
+import {
+  FileText, MoreVertical, Settings2,
+  Brain, Search, BookOpen, Code2, Play, Lightbulb, PenLine, Sparkles,
+} from "lucide-react";
+
+// Icône associée à chaque phase annoncée par le backend (champ `phase`).
+const STEP_ICONS: Record<string, typeof Brain> = {
+  thinking: Brain,
+  searching: Search,
+  reading: BookOpen,
+  coding: Code2,
+  executing: Play,
+  compute: Sparkles,
+  interpreting: Lightbulb,
+  writing: PenLine,
+};
 
 interface Message {
   role: "user" | "assistant";
@@ -360,6 +375,8 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     latestInput.current = input;
   }, [input]);
   const [loading, setLoading] = useState(false);
+  // Étape en cours annoncée par le backend, affichée à la place des trois points.
+  const [activeStep, setActiveStep] = useState<{ phase: string; message: string } | null>(null);
   const [typingDone, setTypingDone] = useState<Set<number>>(new Set());
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<{ page: number; text: string } | null>(null);
@@ -512,7 +529,9 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
       const selected = selectedModel?.trim();
-      const res = await fetch(`${apiUrl}/api/chat`, {
+      // Flux NDJSON : le backend annonce chaque étape (recherche de passages,
+      // génération de code, interprétation…) avant d'envoyer la réponse finale.
+      const res = await fetch(`${apiUrl}/api/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -522,17 +541,44 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         }),
         signal: controller.signal,
       });
-      if (!res.ok) {
+      if (!res.ok || !res.body) {
         const error = await res.text();
         throw new Error(error || `Erreur serveur (${res.status})`);
       }
-      const data = await res.json();
-      const textResponse = data.response;
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let data: { response?: string; images?: string[]; sources?: unknown[] } | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Une ligne complète = un événement ; le reliquat attend la suite.
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line);
+          if (event.type === "step") {
+            setActiveStep({ phase: event.phase, message: event.message });
+          } else if (event.type === "result") {
+            data = event;
+          } else if (event.type === "error") {
+            throw new Error(event.message);
+          }
+        }
+      }
+
+      if (!data) throw new Error("Aucune réponse reçue du serveur.");
+      const textResponse = data.response ?? "";
       setMessages(m => [...m, {
         role: "assistant",
         text: textResponse,
         images: data.images || [],
-        sources: data.sources || [],
+        sources: (data.sources as Message["sources"]) || [],
       }]);
       onAssistantMessage?.(textResponse);
     } catch (err: any) {
@@ -543,6 +589,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       }
     } finally {
       setLoading(false);
+      setActiveStep(null);
       abortControllerRef.current = null;
     }
   };
@@ -861,10 +908,37 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                     width: 7px; height: 7px; border-radius: 50%;
                     animation: chat-dot-bounce 1.2s ease-in-out infinite;
                   }
+                  @keyframes chat-step-shimmer {
+                    0%   { background-position: 120% 0; }
+                    100% { background-position: -20% 0; }
+                  }
+                  .chat-step-label {
+                    font-size: 13.5px; font-weight: 500; white-space: nowrap;
+                    background: linear-gradient(90deg,
+                      var(--text-muted) 0%, var(--text-muted) 35%,
+                      #a78bfa 50%,
+                      var(--text-muted) 65%, var(--text-muted) 100%);
+                    background-size: 220% 100%;
+                    -webkit-background-clip: text; background-clip: text;
+                    color: transparent;
+                    animation: chat-step-shimmer 2s linear infinite;
+                  }
                 `}</style>
-                <span className="chat-dot" style={{ background: "#8ab4f8", animationDelay: "0s" }} />
-                <span className="chat-dot" style={{ background: "#a78bfa", animationDelay: "0.2s" }} />
-                <span className="chat-dot" style={{ background: "#c58af9", animationDelay: "0.4s" }} />
+                {activeStep ? (
+                  <>
+                    {(() => {
+                      const StepIcon = STEP_ICONS[activeStep.phase] ?? Sparkles;
+                      return <StepIcon size={15} strokeWidth={1.9} style={{ color: "#a78bfa", flexShrink: 0 }} />;
+                    })()}
+                    <span className="chat-step-label">{activeStep.message}</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="chat-dot" style={{ background: "#8ab4f8", animationDelay: "0s" }} />
+                    <span className="chat-dot" style={{ background: "#a78bfa", animationDelay: "0.2s" }} />
+                    <span className="chat-dot" style={{ background: "#c58af9", animationDelay: "0.4s" }} />
+                  </>
+                )}
               </div>
             </div>
           )}

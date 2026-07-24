@@ -105,10 +105,16 @@ def chunk_page_text(page_text: str, page_number: int, chunk_size: int = 400, ove
         i += chunk_size - overlap
     return chunks
 
-def index_document(session_id: str, file_bytes: bytes, filename: str) -> dict:
+def index_document(session_id: str, file_bytes: bytes, filename: str, text: str | None = None) -> dict:
+    """Indexe un document dans ChromaDB.
+
+    `text` permet de fournir un texte déjà extrait en amont (ex : sortie OCR
+    d'un PDF scanné), pour lequel l'extraction directe depuis le PDF ne
+    renverrait rien.
+    """
     try:
         all_chunks = []
-        extracted_text = extract_text_from_pdf(file_bytes)
+        extracted_text = text if text is not None else extract_text_from_pdf(file_bytes)
         if extracted_text.strip():
             all_chunks = chunk_page_text(extracted_text, 1)
 

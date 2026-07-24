@@ -51,9 +51,12 @@ export async function sendChatMessage(
   sessionId: string,
   message: string,
   model: string | undefined,
-  signal: AbortSignal
+  signal: AbortSignal,
+  /** Appelé à chaque étape annoncée par le backend (réflexion, génération de
+   *  code, recherche de passages…) pour informer l'utilisateur pendant l'attente. */
+  onStep?: (step: { phase: string; message: string }) => void
 ): Promise<{ response: string; images: string[]; sources: ChatSource[] }> {
-  const res = await fetch(`${API_URL}/api/chat`, {
+  const res = await fetch(`${API_URL}/api/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -63,11 +66,35 @@ export async function sendChatMessage(
     }),
     signal,
   });
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
     const errText = await res.text();
     throw new Error(errText || `Erreur serveur (${res.status})`);
   }
-  return res.json();
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let result: { response: string; images: string[]; sources: ChatSource[] } | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Une ligne complète = un événement NDJSON ; le reliquat attend la suite.
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+      if (event.type === "step") onStep?.({ phase: event.phase, message: event.message });
+      else if (event.type === "result") result = event;
+      else if (event.type === "error") throw new Error(event.message);
+    }
+  }
+
+  if (!result) throw new Error("Aucune réponse reçue du serveur.");
+  return { response: result.response, images: result.images ?? [], sources: result.sources ?? [] };
 }
 
 export async function transcribeAudio(blob: Blob): Promise<string> {
@@ -169,8 +196,11 @@ export async function predictModel(
   return data.prediction;
 }
 
-export async function getDashboardData(sessionId: string): Promise<DashboardData> {
-  const res = await fetch(`${API_URL}/api/dashboard/data/${sessionId}`);
+export async function getDashboardData(sessionId: string, datasetId?: string): Promise<DashboardData> {
+  // `datasetId` sélectionne l'un des jeux de données de la session ; sans lui,
+  // le backend renvoie le premier disponible.
+  const query = datasetId ? `?dataset_id=${encodeURIComponent(datasetId)}` : "";
+  const res = await fetch(`${API_URL}/api/dashboard/data/${sessionId}${query}`);
   if (!res.ok) throw new Error("Erreur lors de la récupération des données du dashboard.");
   return res.json();
 }

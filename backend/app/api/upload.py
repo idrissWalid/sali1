@@ -1,8 +1,9 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from fastapi.responses import StreamingResponse
+from pathlib import Path
 import json
 import asyncio
-from app.services.ingestion_service import detect_file_type, load_tabular
+from app.services.ingestion_service import detect_file_type, load_tabular, extract_table_from_pdf
 from app.services.analysis_service import analyze_tabular
 from app.services.session_service import create_session, save_data_context, add_to_history
 from app.services.session_service import save_file_bytes
@@ -82,7 +83,16 @@ async def list_llm_models():
     }
 
 @router.post("/upload")
-async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:latest"), index_doc: str = Form("true")):
+async def upload_file(
+    file: UploadFile = File(...),
+    model: str = Form("gemma2:latest"),
+    index_doc: str = Form("true"),
+    session_id: str = Form(""),
+):
+    """Analyse un fichier. Avec `session_id`, le fichier est rattaché comme jeu
+    de données supplémentaire à une session existante au lieu d'en créer une."""
+    attach_to_session = session_id.strip() or None
+
     async def event_generator():
         # Étape 1 : Lecture et détection du format
         yield json.dumps({
@@ -111,6 +121,41 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
                 "technical": "Unsupported file format"
             }) + "\n"
             return
+
+        if file_type == "document":
+            yield json.dumps({
+                "status": "processing",
+                "step": 1,
+                "message": "Recherche d'un tableau de données dans le PDF..."
+            }) + "\n"
+            await asyncio.sleep(0.05)
+
+            try:
+                embedded_table_df = extract_table_from_pdf(file_bytes)
+            except Exception:
+                embedded_table_df = None
+
+            extracted_df = embedded_table_df
+            if extracted_df is not None:
+                # Un rapport (texte narratif + tableau) doit rester sur le pipeline
+                # document : basculer en mode tabulaire écraserait tout le contexte
+                # (titre, intro, conclusion) au profit du seul tableau. On ne
+                # reclasse donc que les PDF où le tableau domine largement le
+                # contenu (peu ou pas de texte en dehors de lui). Dans le cas
+                # rapport, embedded_table_df est conservé pour être attaché à la
+                # session document comme dataset secondaire (cf. plus bas).
+                from app.services.rag_service import extract_text_from_pdf as _extract_pdf_text
+                full_text = _extract_pdf_text(file_bytes)
+                table_text_len = sum(len(str(v)) for row in extracted_df.itertuples(index=False) for v in row)
+                narrative_len = max(len(full_text) - table_text_len, 0)
+                if narrative_len > 400:
+                    extracted_df = None
+
+            if extracted_df is not None:
+                file_bytes = extracted_df.to_csv(index=False).encode("utf-8")
+                filename = Path(filename).stem + ".csv"
+                file_type = "tabular"
+                embedded_table_df = None  # devient le dataset principal, plus un secondaire
 
         if file_type == "tabular":
             # Étape 2 : Analyse structurelle
@@ -164,6 +209,28 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
                     "message": "Finalisation et initialisation de la session..."
                 }) + "\n"
                 await asyncio.sleep(0.05)
+
+                if attach_to_session:
+                    # Jeu de données ajouté à une session déjà ouverte : on ne
+                    # touche ni à son fichier principal ni à son historique.
+                    from app.services.session_service import add_dataset
+                    dataset_id = add_dataset(
+                        attach_to_session, file_bytes, filename,
+                        result["profile"], result["stats"], name=filename,
+                    )
+                    yield json.dumps({
+                        "status": "completed",
+                        "data": {
+                            "type": "dataset_added",
+                            "session_id": attach_to_session,
+                            "dataset_id": dataset_id,
+                            "filename": filename,
+                            "profile": result["profile"],
+                            "stats": result["stats"],
+                            "interpretation": result["interpretation"],
+                        }
+                    }) + "\n"
+                    return
 
                 session_id = create_session()
                 save_data_context(session_id, result["profile"], result["stats"], filename)
@@ -223,6 +290,22 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
                 }) + "\n"
                 return
 
+            has_embedded_table = False
+            if embedded_table_df is not None:
+                try:
+                    from app.services.profiling_service import generate_profiling_stats
+                    from app.services.session_service import save_embedded_table
+
+                    table_csv_bytes = embedded_table_df.to_csv(index=False).encode("utf-8")
+                    table_filename = Path(filename).stem + ".csv"
+                    table_check = load_tabular(table_csv_bytes, table_filename)
+                    if table_check["status"] == "ok":
+                        table_stats = generate_profiling_stats(embedded_table_df)
+                        save_embedded_table(session_id, table_csv_bytes, table_filename, table_check["profile"], table_stats)
+                        has_embedded_table = True
+                except Exception:
+                    pass  # Le résumé du document reste utile même si le dataset secondaire échoue.
+
             # Étape 3 : Analyse et résumé IA
             yield json.dumps({
                 "status": "processing",
@@ -242,8 +325,59 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
                     raw_context = " ".join(raw_context.split()[:2400])  # Prend environ le même nombre de mots que 6 chunks
 
                 if not raw_context.strip():
-                    # Aucun texte extractible (scan/photo) : fallback retrieval visuel via ColSmolVLM.
-                    # Les pages sont embarquées telles quelles (images), sans passer par de l'OCR.
+                    # Aucun texte extractible (scan/photo). On tente d'abord un OCR
+                    # local : s'il aboutit, le document redevient un document texte
+                    # ordinaire, exploitable par n'importe quel modèle (y compris un
+                    # LLM local), avec citations RAG et extraction de tableau.
+                    yield json.dumps({
+                        "status": "processing",
+                        "step": 3,
+                        "message": "Document scanné détecté — reconnaissance de texte (OCR) en cours..."
+                    }) + "\n"
+                    await asyncio.sleep(0.05)
+
+                    try:
+                        from app.services.ocr_service import ocr_pdf_pages, extract_table_from_ocr
+                        ocr_pages = ocr_pdf_pages(file_bytes)
+                        ocr_text = "\n\n".join(p["text"] for p in ocr_pages if p["text"].strip()).strip()
+                    except Exception:
+                        ocr_pages, ocr_text = [], ""
+
+                    if ocr_text:
+                        if index_doc.lower() == "true":
+                            try:
+                                ocr_index = index_document(session_id, file_bytes, filename, text=ocr_text)
+                                chunks_indexed = ocr_index.get("chunks_indexed", 0)
+                            except Exception:
+                                chunks_indexed = 0
+
+                        # Un tableau scanné peut lui aussi devenir un dataset de session.
+                        try:
+                            from app.services.profiling_service import generate_profiling_stats
+                            from app.services.session_service import save_embedded_table
+
+                            ocr_table_df = extract_table_from_ocr(ocr_pages)
+                            if ocr_table_df is not None:
+                                table_csv_bytes = ocr_table_df.to_csv(index=False).encode("utf-8")
+                                table_filename = Path(filename).stem + ".csv"
+                                table_check = load_tabular(table_csv_bytes, table_filename)
+                                if table_check["status"] == "ok":
+                                    save_embedded_table(
+                                        session_id,
+                                        table_csv_bytes,
+                                        table_filename,
+                                        table_check["profile"],
+                                        generate_profiling_stats(ocr_table_df),
+                                    )
+                                    has_embedded_table = True
+                        except Exception:
+                            pass  # Le texte OCR reste utile même sans tableau exploitable.
+
+                        raw_context = " ".join(ocr_text.split()[:2400])
+
+                if not raw_context.strip():
+                    # OCR infructueux (photo illisible, écriture manuscrite...) :
+                    # dernier recours, retrieval visuel via ColSmolVLM + Gemini Vision.
                     from app.services.colsmolvlm_service import index_visual_document, render_pdf_to_images
                     from app.services.gemini_service import ask_gemini_vision
                     from app.services.session_service import set_session_type as _set_session_type
@@ -349,6 +483,7 @@ async def upload_file(file: UploadFile = File(...), model: str = Form("gemma2:la
                         "session_id": session_id,
                         "filename": filename,
                         "chunks_indexed": chunks_indexed,
+                        "has_embedded_table": has_embedded_table,
                         "summary": summary
                     }
                 }) + "\n"

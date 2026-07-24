@@ -3,11 +3,19 @@
 import { AnimatePresence, motion } from "framer-motion";
 import {
   BarChart3,
+  BookOpen,
+  Brain,
+  Code2,
   FileText,
+  Lightbulb,
   Mic,
   MoreVertical,
+  PenLine,
+  Play,
+  Search,
   Send,
   Settings2,
+  Sparkles,
   Square,
   UploadCloud,
   X,
@@ -28,6 +36,18 @@ interface Props {
   onUploadClick?: () => void;
   onAssistantMessage?: (text: string) => void;
 }
+
+// Icône associée à chaque phase annoncée par le backend (champ `phase`).
+const STEP_ICONS: Record<string, typeof Brain> = {
+  thinking: Brain,
+  searching: Search,
+  reading: BookOpen,
+  coding: Code2,
+  executing: Play,
+  compute: Sparkles,
+  interpreting: Lightbulb,
+  writing: PenLine,
+};
 
 const UPLOAD_STEPS = [
   { step: 1, label: "Lecture" },
@@ -198,6 +218,8 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
   const [input, setInput] = useState("");
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const [loading, setLoading] = useState(false);
+  // Étape en cours annoncée par le backend, affichée à la place des trois points.
+  const [activeStep, setActiveStep] = useState<{ phase: string; message: string } | null>(null);
   const [typingDone, setTypingDone] = useState<Set<number>>(new Set());
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<ChatSource | null>(null);
@@ -294,7 +316,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     const controller = new AbortController();
     abortRef.current = controller;
     try {
-      const data = await sendChatMessage(sessionId, text, selectedModel, controller.signal);
+      const data = await sendChatMessage(sessionId, text, selectedModel, controller.signal, setActiveStep);
       setMessages((m) => [...m, { role: "assistant", text: data.response, images: data.images || [], sources: data.sources || [] }]);
       onAssistantMessage?.(data.response);
     } catch (err: unknown) {
@@ -305,6 +327,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       }
     } finally {
       setLoading(false);
+      setActiveStep(null);
       abortRef.current = null;
     }
   };
@@ -554,11 +577,21 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
 
           {loading && (
             <div className="mb-7 fc-fade-up">
-              <div className="flex items-center gap-1.5">
-                <span className="fc-dot" style={{ background: "var(--accent)" }} />
-                <span className="fc-dot" style={{ background: "var(--accent)", animationDelay: "0.2s" }} />
-                <span className="fc-dot" style={{ background: "var(--accent)", animationDelay: "0.4s" }} />
-              </div>
+              {activeStep ? (
+                <div className="flex items-center gap-2">
+                  {(() => {
+                    const StepIcon = STEP_ICONS[activeStep.phase] ?? Sparkles;
+                    return <StepIcon size={15} strokeWidth={1.9} style={{ color: "var(--accent)", flexShrink: 0 }} />;
+                  })()}
+                  <span className="fc-step-label">{activeStep.message}</span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <span className="fc-dot" style={{ background: "var(--accent)" }} />
+                  <span className="fc-dot" style={{ background: "var(--accent)", animationDelay: "0.2s" }} />
+                  <span className="fc-dot" style={{ background: "var(--accent)", animationDelay: "0.4s" }} />
+                </div>
+              )}
             </div>
           )}
             </>

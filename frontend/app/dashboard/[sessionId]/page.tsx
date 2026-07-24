@@ -16,6 +16,17 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'
 const formatAxisNumber = (value: number) =>
   new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 
+// Sur un axe temporel proportionnel, la granularité des libellés doit suivre
+// l'amplitude réellement couverte : afficher une date complète sur dix ans est
+// illisible, afficher seulement l'année sur une semaine ne dit plus rien.
+const formatTimeTick = (ts: number, spanDays: number) => {
+  const date = new Date(ts);
+  if (spanDays <= 2) return date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  if (spanDays <= 90) return date.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" });
+  if (spanDays <= 1095) return date.toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+  return date.getFullYear().toString();
+};
+
 interface DashboardData {
   overview: {
     n_lignes?: number;
@@ -25,7 +36,18 @@ interface DashboardData {
   };
   preview: Record<string, unknown>[];
   variables: Record<string, unknown>;
-  distributions: Record<string, { type: string; data: { name: string; value: number }[] }>;
+  distributions: Record<string, {
+    type: string;
+    /** Graphique choisi par le backend : histogram | bar | hbar | donut | line */
+    chart?: string;
+    /** Séries temporelles : granularités disponibles et points par granularité */
+    granularities?: { key: string; label: string; points: number }[];
+    default_granularity?: string;
+    series?: Record<string, { name: string; value: number; ts?: number }[]>;
+    data: { name: string; value: number; ts?: number }[];
+  }>;
+  datasets?: { id: string; name: string; filename?: string; source?: string; rows?: number; columns?: number }[];
+  dataset_id?: string;
   filename: string;
 }
 
@@ -36,6 +58,9 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [selectedVar, setSelectedVar] = useState<string>("");
   const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [selectedDataset, setSelectedDataset] = useState<string>("");
+  // Granularité temporelle choisie manuellement ; vide = celle proposée par défaut.
+  const [granularity, setGranularity] = useState<string>("");
 
   useEffect(() => {
     const observer = new MutationObserver((mutations) => {
@@ -68,16 +93,16 @@ export default function DashboardPage() {
     const fetchData = async () => {
       try {
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
-        const res = await fetch(`${apiUrl}/api/dashboard/data/${sessionId}`);
+        const query = selectedDataset ? `?dataset_id=${encodeURIComponent(selectedDataset)}` : "";
+        const res = await fetch(`${apiUrl}/api/dashboard/data/${sessionId}${query}`);
         if (!res.ok) throw new Error("Erreur lors de la récupération des données");
         const json = await res.json();
         setData(json);
-        
-        // Select first variable by default if distributions exist
+
+        // Les variables changent d'un dataset à l'autre : on ne conserve la
+        // sélection courante que si elle existe encore.
         const vars = Object.keys(json.distributions || {});
-        if (vars.length > 0) {
-          setSelectedVar(vars[0]);
-        }
+        setSelectedVar((current) => (current && vars.includes(current) ? current : vars[0] ?? ""));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Erreur de récupération");
       } finally {
@@ -85,7 +110,7 @@ export default function DashboardPage() {
       }
     };
     if (sessionId) fetchData();
-  }, [sessionId]);
+  }, [sessionId, selectedDataset]);
 
   if (loading) return (
     <div className="flex h-screen w-full items-center justify-center bg-gray-50 dark:bg-[#111]">
@@ -108,6 +133,39 @@ export default function DashboardPage() {
   const { overview, preview, variables, distributions, filename } = data;
   const activeDist = selectedVar ? distributions[selectedVar] : null;
 
+  // Le backend choisit le graphique adapté à la nature de la colonne. On garde
+  // une correspondance de repli pour les sessions analysées avant cette version,
+  // dont les distributions ne portent pas encore de champ `chart`.
+  const chartKind =
+    activeDist?.chart ??
+    (activeDist?.type === "categorical"
+      ? "donut"
+      : activeDist?.type === "numeric"
+        ? "histogram"
+        : activeDist?.type === "timeseries" || activeDist?.type === "datetime"
+          ? "line"
+          : null);
+
+  // Séries temporelles : toutes les granularités arrivent dans la même réponse,
+  // le changement d'échelle est donc instantané (aucun rechargement).
+  const granularityOptions = activeDist?.granularities ?? [];
+  const activeGranularity =
+    granularity && activeDist?.series?.[granularity]
+      ? granularity
+      : activeDist?.default_granularity ?? "";
+  const chartData =
+    (activeGranularity && activeDist?.series?.[activeGranularity]) || activeDist?.data || [];
+
+  const timestamps = chartData
+    .map((point) => point.ts)
+    .filter((ts): ts is number => typeof ts === "number");
+  const hasTimestamps = timestamps.length > 1;
+  const spanDays = hasTimestamps
+    ? (Math.max(...timestamps) - Math.min(...timestamps)) / 86_400_000
+    : 0;
+
+  const datasets = data.datasets ?? [];
+
   return (
     <div className="dashboard-shell min-h-screen w-full bg-gray-50 dark:bg-[#111] text-gray-900 dark:text-gray-100 font-sans">
       <div className="dashboard-container">
@@ -121,6 +179,24 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex gap-2">
+            {/* Sélecteur de jeu de données : une session peut en porter
+                plusieurs (fichier principal, tableau extrait d'un PDF, fichiers
+                ajoutés ensuite). */}
+            {datasets.length > 1 && (
+              <select
+                value={data.dataset_id ?? ""}
+                onChange={(event) => setSelectedDataset(event.target.value)}
+                className="px-3 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm text-sm font-medium max-w-[280px]"
+                aria-label="Jeu de données"
+              >
+                {datasets.map((dataset) => (
+                  <option key={dataset.id} value={dataset.id}>
+                    {dataset.name}
+                    {dataset.rows ? ` (${dataset.rows} lignes)` : ""}
+                  </option>
+                ))}
+              </select>
+            )}
             <button onClick={toggleTheme} className="p-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center justify-center text-sm font-medium">
               {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}
             </button>
@@ -180,23 +256,46 @@ export default function DashboardPage() {
 
           {/* Right Column: Chart Display */}
           <div className="dashboard-panel dashboard-chart lg:col-span-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm flex flex-col">
-            <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-              {activeDist?.type === "timeseries" ? "Évolution temporelle de" : "Distribution de"} <span className="text-blue-500">{selectedVar}</span>
-            </h2>
-            
+            <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                {activeDist?.type === "timeseries" ? "Évolution temporelle de" : "Distribution de"} <span className="text-blue-500">{selectedVar}</span>
+              </h2>
+
+              {/* Choix de l'échelle temporelle : toutes les granularités sont
+                  déjà chargées, la bascule est donc immédiate. */}
+              {granularityOptions.length > 1 && (
+                <div className="flex items-center gap-1 rounded-lg border border-gray-200 dark:border-gray-800 p-1">
+                  {granularityOptions.map((option) => (
+                    <button
+                      key={option.key}
+                      onClick={() => setGranularity(option.key)}
+                      className={`px-3 py-1 rounded-md text-sm font-medium transition ${
+                        activeGranularity === option.key
+                          ? "bg-blue-500 text-white"
+                          : "text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-[#222]"
+                      }`}
+                      title={`${option.points} points`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="dashboard-chart-canvas flex-1 w-full">
-              {!activeDist || !activeDist.data || activeDist.data.length === 0 ? (
+              {!activeDist || chartData.length === 0 ? (
                 <div className="h-full flex items-center justify-center text-gray-400">
                   <div className="text-center">
                     <Info className="w-8 h-8 mx-auto mb-2 opacity-50" />
                     <p>Aucune donnée à visualiser pour cette variable.</p>
                   </div>
                 </div>
-              ) : activeDist.type === "categorical" ? (
+              ) : chartKind === "donut" ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie
-                      data={activeDist.data}
+                      data={chartData}
                       cx="38%"
                       cy="50%"
                       innerRadius={72}
@@ -205,22 +304,61 @@ export default function DashboardPage() {
                       dataKey="value"
                       label={false}
                     >
-                      {activeDist.data.map((entry: Record<string, unknown>, index: number) => (
+                      {chartData.map((entry: Record<string, unknown>, index: number) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip 
+                    <Tooltip
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
                       itemStyle={{ color: '#fff' }}
                     />
                     <Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ right: 16, lineHeight: '24px' }} />
                   </PieChart>
                 </ResponsiveContainer>
-              ) : activeDist.type === "numeric" ? (
+              ) : chartKind === "hbar" ? (
+                /* Barres horizontales : les libellés de catégories restent lisibles
+                   même longs et nombreux, là où un camembert devient illisible. */
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={activeDist.data} margin={{ top: 20, right: 30, left: 0, bottom: 50 }}>
+                  <BarChart
+                    data={chartData}
+                    layout="vertical"
+                    margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.2} horizontal={false} />
+                    <XAxis type="number" tick={{fill: '#888', fontSize: 12}} allowDecimals={false} tickFormatter={formatAxisNumber} />
+                    <YAxis
+                      type="category"
+                      dataKey="name"
+                      tick={{fill: '#888', fontSize: 12}}
+                      width={150}
+                      interval={0}
+                    />
+                    <Tooltip
+                      contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
+                      itemStyle={{ color: '#fff' }}
+                      cursor={{fill: 'rgba(255,255,255,0.1)'}}
+                    />
+                    <Bar dataKey="value" fill="#3b82f6" radius={[0, 4, 4, 0]}>
+                      {chartData.map((entry: Record<string, unknown>, index: number) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : chartKind === "histogram" || chartKind === "bar" ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 50 }}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{fill: '#888', fontSize: 12}} interval={0} />
+                    {/* Pas de interval={0} : Recharts espace les libellés au lieu
+                        de tous les forcer, ce qui évite le chevauchement. */}
+                    <XAxis
+                      dataKey="name"
+                      angle={-45}
+                      textAnchor="end"
+                      height={80}
+                      tick={{fill: '#888', fontSize: 12}}
+                      minTickGap={4}
+                    />
                     <YAxis
                       tick={{fill: '#888'}}
                       domain={[0, 'auto']}
@@ -234,26 +372,46 @@ export default function DashboardPage() {
                       cursor={{fill: 'rgba(255,255,255,0.1)'}}
                     />
                     <Bar dataKey="value" fill="#3b82f6" radius={[4, 4, 0, 0]}>
-                      {activeDist.data.map((entry: Record<string, unknown>, index: number) => (
+                      {chartData.map((entry: Record<string, unknown>, index: number) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-              ) : activeDist.type === "datetime" || activeDist.type === "timeseries" ? (
+              ) : chartKind === "line" ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={activeDist.data} margin={{ top: 20, right: 30, left: 0, bottom: 50 }}>
+                  <LineChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 50 }}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{fill: '#888', fontSize: 12}} minTickGap={20} />
+                    {/* Axe temporel proportionnel quand le backend fournit des
+                        horodatages : un trou de trois ans occupe alors vraiment
+                        trois ans, au lieu d'un simple cran de plus. */}
+                    {hasTimestamps ? (
+                      <XAxis
+                        dataKey="ts"
+                        type="number"
+                        scale="time"
+                        domain={['dataMin', 'dataMax']}
+                        tick={{fill: '#888', fontSize: 12}}
+                        tickFormatter={(ts: number) => formatTimeTick(ts, spanDays)}
+                        minTickGap={30}
+                        height={50}
+                      />
+                    ) : (
+                      <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{fill: '#888', fontSize: 12}} minTickGap={20} />
+                    )}
                     <YAxis
                       tick={{fill: '#888'}}
-                      domain={[0, 'auto']}
-                      allowDecimals={activeDist.type === "timeseries"}
+                      domain={['auto', 'auto']}
                       tickFormatter={formatAxisNumber}
                       width={56}
                     />
                     <Tooltip
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
+                      labelFormatter={(label: React.ReactNode) =>
+                        hasTimestamps && (typeof label === "number" || typeof label === "string")
+                          ? new Date(Number(label)).toLocaleDateString("fr-FR")
+                          : String(label ?? "")
+                      }
                     />
                     <Line type="monotone" dataKey="value" stroke="#3b82f6" strokeWidth={3} dot={false} activeDot={{ r: 4, fill: '#3b82f6' }} />
                   </LineChart>

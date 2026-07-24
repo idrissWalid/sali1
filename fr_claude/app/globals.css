@@ -176,6 +176,28 @@ body {
   border-radius: 999px;
   animation: fc-dot-bounce 1.1s ease-in-out infinite;
 }
+/* Libellé de l'étape en cours (réflexion, génération de code…) : un balayage
+   lumineux suggère le travail en cours sans être aussi bruyant qu'un spinner. */
+@keyframes fc-step-shimmer {
+  0% { background-position: 120% 0; }
+  100% { background-position: -20% 0; }
+}
+.fc-step-label {
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: linear-gradient(
+    90deg,
+    var(--text-muted) 0%, var(--text-muted) 35%,
+    var(--accent) 50%,
+    var(--text-muted) 65%, var(--text-muted) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: fc-step-shimmer 2s linear infinite;
+}
 .fc-caret {
   animation: fc-caret 0.9s step-start infinite;
 }

@@ -42,6 +42,7 @@ def get_session(session_id: str) -> Optional[dict]:
         "profiling_html": row["profiling_html"],
         "initial_analysis": row["initial_analysis"],
         "file_path": row["file_path"],
+        "embedded_table_filename": row["embedded_table_filename"],
         "history": get_history(session_id)
     }
 
@@ -159,6 +160,205 @@ def get_file_bytes(session_id: str):
     with open(row["file_path"], "rb") as f:
         file_bytes = f.read()
     return file_bytes, row["filename"]
+
+def save_embedded_table(session_id: str, file_bytes: bytes, filename: str, profile: dict, stats: dict):
+    """Attache un dataset tabulaire secondaire à une session document (ex : un
+    tableau extrait d'un rapport PDF), sans toucher au fichier/résumé principal
+    du document."""
+    file_path = os.path.join(UPLOADS_DIR, f"{session_id}_table_{filename}")
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE sessions
+        SET embedded_table_filename = ?, embedded_table_file_path = ?,
+            embedded_table_profile = ?, embedded_table_stats = ?
+        WHERE id = ?
+        """,
+        (filename, file_path, json.dumps(profile), json.dumps(stats), session_id)
+    )
+    conn.commit()
+    conn.close()
+
+def get_embedded_table(session_id: str):
+    """Retourne (file_bytes, filename, profile, stats) du dataset secondaire
+    attaché à une session document, ou (None, None, None, None) s'il n'y en a pas."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT embedded_table_filename, embedded_table_file_path, embedded_table_profile, embedded_table_stats FROM sessions WHERE id = ?",
+        (session_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row or not row["embedded_table_file_path"] or not os.path.exists(row["embedded_table_file_path"]):
+        return None, None, None, None
+
+    with open(row["embedded_table_file_path"], "rb") as f:
+        file_bytes = f.read()
+
+    profile = json.loads(row["embedded_table_profile"]) if row["embedded_table_profile"] else None
+    stats = json.loads(row["embedded_table_stats"]) if row["embedded_table_stats"] else None
+    return file_bytes, row["embedded_table_filename"], profile, stats
+
+MAIN_DATASET_ID = "__main__"
+EMBEDDED_DATASET_ID = "__embedded__"
+
+
+def add_dataset(session_id: str, file_bytes: bytes, filename: str, profile: dict, stats: dict,
+                name: str | None = None, source: str = "upload") -> str:
+    """Rattache un jeu de données supplémentaire à une session existante."""
+    dataset_id = str(uuid.uuid4())
+    file_path = os.path.join(UPLOADS_DIR, f"{session_id}_ds_{dataset_id}_{filename}")
+    with open(file_path, "wb") as f:
+        f.write(file_bytes)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO datasets (id, session_id, name, filename, file_path, data_profile, data_stats, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (dataset_id, session_id, name or filename, filename, file_path,
+         json.dumps(profile), json.dumps(stats), source)
+    )
+    conn.commit()
+    conn.close()
+    return dataset_id
+
+
+def list_datasets(session_id: str) -> list[dict]:
+    """Tous les jeux de données consultables dans une session.
+
+    Le fichier principal et le tableau éventuellement extrait d'un PDF sont
+    synthétisés depuis les colonnes de `sessions`, si bien que les sessions
+    créées avant l'arrivée du multi-dataset apparaissent normalement.
+    """
+    session = get_session(session_id)
+    if not session:
+        return []
+
+    datasets = []
+
+    if session.get("file_path") and os.path.exists(session["file_path"]):
+        profile = session.get("data_profile") or {}
+        datasets.append({
+            "id": MAIN_DATASET_ID,
+            "name": session.get("filename") or "Jeu de données principal",
+            "filename": session.get("filename"),
+            "source": "upload",
+            "rows": profile.get("rows"),
+            "columns": profile.get("columns"),
+        })
+
+    if session.get("embedded_table_filename"):
+        _, filename, profile, _ = get_embedded_table(session_id)
+        if filename:
+            profile = profile or {}
+            datasets.append({
+                "id": EMBEDDED_DATASET_ID,
+                "name": f"Tableau extrait — {filename}",
+                "filename": filename,
+                "source": "extracted_table",
+                "rows": profile.get("rows"),
+                "columns": profile.get("columns"),
+            })
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, name, filename, file_path, data_profile, source FROM datasets WHERE session_id = ? ORDER BY created_at ASC",
+        (session_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    for row in rows:
+        if not row["file_path"] or not os.path.exists(row["file_path"]):
+            continue
+        profile = json.loads(row["data_profile"]) if row["data_profile"] else {}
+        datasets.append({
+            "id": row["id"],
+            "name": row["name"] or row["filename"],
+            "filename": row["filename"],
+            "source": row["source"] or "upload",
+            "rows": profile.get("rows"),
+            "columns": profile.get("columns"),
+        })
+
+    return datasets
+
+
+def get_dataset(session_id: str, dataset_id: str | None = None):
+    """Charge un jeu de données de la session : (bytes, filename, profile, stats).
+
+    Sans `dataset_id`, renvoie le premier disponible (fichier principal en
+    général), ce qui préserve le comportement d'avant le multi-dataset.
+    """
+    if dataset_id is None:
+        available = list_datasets(session_id)
+        if not available:
+            return None, None, None, None
+        dataset_id = available[0]["id"]
+
+    if dataset_id == MAIN_DATASET_ID:
+        session = get_session(session_id)
+        file_bytes, filename = get_file_bytes(session_id)
+        stats = session.get("data_stats") if session else None
+        profile = session.get("data_profile") if session else None
+        return file_bytes, filename, profile, stats
+
+    if dataset_id == EMBEDDED_DATASET_ID:
+        return get_embedded_table(session_id)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT filename, file_path, data_profile, data_stats FROM datasets WHERE id = ? AND session_id = ?",
+        (dataset_id, session_id)
+    )
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row or not row["file_path"] or not os.path.exists(row["file_path"]):
+        return None, None, None, None
+
+    with open(row["file_path"], "rb") as f:
+        file_bytes = f.read()
+    profile = json.loads(row["data_profile"]) if row["data_profile"] else None
+    stats = json.loads(row["data_stats"]) if row["data_stats"] else None
+    return file_bytes, row["filename"], profile, stats
+
+
+def get_embedded_table_context(session_id: str) -> str:
+    """Bloc de contexte texte pour le prompt du chat, quand une session document
+    a un tableau de données attaché : permet de répondre avec des chiffres exacts
+    plutôt que de deviner à partir du résumé narratif."""
+    _, filename, profile, stats = get_embedded_table(session_id)
+    if not profile:
+        return ""
+
+    overview = stats.get("dataset_overview", {}) if stats else {}
+    variables = stats.get("variables", {}) if stats else {}
+
+    return f"""
+TABLEAU DE DONNÉES DÉTECTÉ DANS CE DOCUMENT ({filename}) :
+Lignes : {profile['rows']} | Colonnes : {profile['columns']}
+Colonnes disponibles : {', '.join(profile['column_names'])}
+
+STATISTIQUES PAR VARIABLE :
+{json.dumps(variables, ensure_ascii=False, indent=2)}
+
+APERÇU (5 premières lignes) :
+{json.dumps(profile['preview'], ensure_ascii=False, indent=2)}
+
+Si la question porte sur ces données chiffrées, réponds en te basant sur ce tableau (calculs, comparaisons, tendances), en plus des extraits textuels du document.
+"""
 
 def get_data_context(session_id: str) -> str:
     session = get_session(session_id)
