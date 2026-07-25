@@ -4,6 +4,7 @@ import os
 import json
 import sqlite3
 from app.core.database import get_db_connection
+from app.core.json_utils import dumps_safe
 
 # Configuration des répertoires persistants
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../data"))
@@ -487,8 +488,8 @@ def save_model_to_db(session_id: str, model_data: dict):
     metadata = model_data.get("metadata", {})
     
     model_type = metadata.get("model_type", "Unknown")
-    features = json.dumps(metadata.get("features", []))
-    metrics = json.dumps(metadata.get("metrics", {}))
+    features = dumps_safe(metadata.get("features", []))
+    metrics = dumps_safe(metadata.get("metrics", {}))
     
     # Save the base64 content to a physical file
     models_dir = os.path.join(DATA_DIR, "models")
@@ -501,8 +502,8 @@ def save_model_to_db(session_id: str, model_data: dict):
             f.write(base64.b64decode(b64_content))
     except Exception as e:
         print(f"Error saving model file: {e}")
-        return
-        
+        return None
+
     cursor.execute(
         """
         INSERT INTO models (id, session_id, name, type, features, metrics, file_path)
@@ -512,4 +513,99 @@ def save_model_to_db(session_id: str, model_data: dict):
     )
     conn.commit()
     conn.close()
+    return model_id
 
+
+def save_timeseries_model_to_db(
+    session_id: str,
+    name: str,
+    report: dict,
+    forecast_image_b64: Optional[str] = None,
+    engine: str = "sarima",
+) -> str:
+    """Persiste un modèle de série temporelle (ARIMA/SARIMA ou prévision automatique).
+
+    Le rapport complet (metrics.json de la méthodologie) est stocké tel quel dans
+    la colonne `metrics`. Le graphique de
+    prévision est intégré en base64 sous la clé `forecast_chart` pour que le
+    dashboard l'affiche sans endpoint supplémentaire. `type` vaut "timeseries"
+    afin que le frontend bascule sur la vue dédiée.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    model_id = str(uuid.uuid4())
+    stored_report = dict(report or {})
+    stored_report["_engine"] = engine
+    if forecast_image_b64:
+        stored_report["forecast_chart"] = forecast_image_b64
+
+    cursor.execute(
+        """
+        INSERT INTO models (id, session_id, name, type, features, metrics, file_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            model_id,
+            session_id,
+            name,
+            "timeseries",
+            json.dumps([]),
+            dumps_safe(stored_report),
+            None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return model_id
+
+
+
+def save_supervised_model_to_db(session_id: str, name: str, report: dict,
+                                model_b64: Optional[str] = None) -> str:
+    """Persiste un modèle issu du tournoi supervisé (régression / classification).
+
+    `type` vaut "supervised" pour que le frontend bascule sur la vue dédiée,
+    distincte de celle des séries temporelles. Le rapport complet (hypothèses
+    testées, candidats comparés, verdict) est stocké tel quel dans `metrics`.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    model_id = str(uuid.uuid4())
+    # Le pipeline sérialisé rend le modèle réutilisable : simulation et export.
+    file_path = None
+    if model_b64:
+        import base64
+
+        models_dir = os.path.join(DATA_DIR, "models")
+        os.makedirs(models_dir, exist_ok=True)
+        file_path = os.path.join(models_dir, f"{model_id}.pkl")
+        try:
+            with open(file_path, "wb") as fh:
+                fh.write(base64.b64decode(model_b64))
+        except Exception:
+            file_path = None
+
+    # Colonnes BRUTES attendues par le pipeline (et non les colonnes encodées) :
+    # c'est ce que le formulaire de simulation doit demander à l'utilisateur.
+    artefact = (report or {}).get("artefact") or {}
+    variables = artefact.get("colonnes_attendues") or (report or {}).get("variables") or []
+    cursor.execute(
+        """
+        INSERT INTO models (id, session_id, name, type, features, metrics, file_path)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            model_id,
+            session_id,
+            name,
+            "supervised",
+            dumps_safe(variables),
+            dumps_safe(report or {}),
+            file_path,
+        ),
+    )
+    conn.commit()
+    conn.close()
+    return model_id

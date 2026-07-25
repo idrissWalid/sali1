@@ -179,7 +179,7 @@ export default function SettingsModal({ isOpen, onClose, models, proprietaryMode
                           {proprietaryModels.map((m) => <option key={m} value={m}>{m}</option>)}
                         </optgroup>
                       )}
-                      {models.length === 0 && proprietaryModels.length === 0 && <option value="gemma2:latest">gemma2:latest</option>}
+                      {models.length === 0 && proprietaryModels.length === 0 && <option value="" disabled>Chargement des modèles…</option>}
                     </select>
                   </div>
                 ) : (

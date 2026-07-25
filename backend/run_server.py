@@ -1,3 +1,11 @@
+import os
+
+# Bannière promotionnelle « Upgrade to ydata-sdk » imprimée à l'import de
+# ydata-profiling, une fois par processus (donc deux fois avec le reloader).
+# La bibliothèque prévoit cette variable pour la taire ; à définir AVANT que
+# `app.main` n'importe le profiling.
+os.environ.setdefault("YDATA_SUPPRESS_BANNER", "1")
+
 import ssl
 import certifi
 
@@ -19,4 +27,15 @@ import logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
+    # `reload=True` surveillait tout `backend/`, venvs compris (~200 000 fichiers
+    # entre venv/ et .venv-timecopilot/) alors que la limite système par défaut
+    # est de 65 536 watchers inotify. Le watcher épuisait le quota, et webpack
+    # côté frontend n'en obtenait plus aucun : « ENOSPC: System limit for number
+    # of file watchers reached » en boucle. On ne surveille donc que le code.
+    uvicorn.run(
+        "app.main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=True,
+        reload_dirs=["app"],
+    )

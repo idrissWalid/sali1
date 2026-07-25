@@ -6,10 +6,12 @@ import asyncio
 from app.services.ingestion_service import detect_file_type, load_tabular, extract_table_from_pdf
 from app.services.analysis_service import analyze_tabular
 from app.services.session_service import create_session, save_data_context, add_to_history
-from app.services.session_service import save_file_bytes
+from app.services.session_service import save_file_bytes, rename_session
+from app.services.naming_service import titre_depuis_donnees, titre_depuis_document
 from app.services.rag_service import index_document, summarize_document, get_document_chunks
 from app.services.gemini_service import complete_text
 from app.core.config import get_api_key, PROVIDER_MODELS
+from app.core import config
 
 router = APIRouter()
 
@@ -62,11 +64,6 @@ async def list_llm_models():
         models = [line.split()[0] for line in lines if line]
     except Exception:
         models = []
-    # Set gemma as default if available
-    gemma_model = "gemma2:latest" if "gemma2:latest" in models else ("gemma:2b" if "gemma:2b" in models else ("gemma" if "gemma" in models else None))
-    if gemma_model:
-        models.remove(gemma_model)
-        models.insert(0, gemma_model)
 
     proprietary = []
     if get_api_key("gemini"):
@@ -77,15 +74,29 @@ async def list_llm_models():
         if get_api_key(provider):
             proprietary.extend(f"{provider}/{m}" for m in provider_models)
 
+    # Modèle par défaut configurable (voir /api/settings/default-model), utilisé
+    # par le frontend pour initialiser la sélection tant que l'utilisateur n'a
+    # rien choisi lui-même.
+    default_model = config.get_default_model()
+    all_models = models + proprietary
+    if default_model in all_models:
+        if default_model in models:
+            models.remove(default_model)
+            models.insert(0, default_model)
+        else:
+            proprietary.remove(default_model)
+            proprietary.insert(0, default_model)
+
     return {
         "models": models,
-        "proprietary": proprietary
+        "proprietary": proprietary,
+        "default": default_model,
     }
 
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    model: str = Form("gemma2:latest"),
+    model: str | None = Form(None),
     index_doc: str = Form("true"),
     session_id: str = Form(""),
 ):
@@ -239,6 +250,13 @@ async def upload_file(
                 save_file_bytes(session_id, file_bytes, filename)
                 add_to_history(session_id, "model", result["interpretation"])
 
+                # Titre déduit du contenu : sans ça, trois imports du même fichier
+                # donnent trois entrées identiques dans l'historique des sessions.
+                titre = titre_depuis_donnees(
+                    filename, result["profile"], result["interpretation"], model=model,
+                )
+                rename_session(session_id, titre)
+
                 # L'ancien dashboard HTML n'est plus généré ici.
                 # Il sera généré à la volée en JSON par /api/dashboard/data/{session_id}
 
@@ -247,6 +265,7 @@ async def upload_file(
                     "data": {
                         "type": "tabular_analyzed",
                         "session_id": session_id,
+                        "title": titre,
                         "profile": result["profile"],
                         "stats": result["stats"],
                         "interpretation": result["interpretation"]
@@ -377,11 +396,27 @@ async def upload_file(
 
                 if not raw_context.strip():
                     # OCR infructueux (photo illisible, écriture manuscrite...) :
-                    # dernier recours, retrieval visuel via ColSmolVLM + Gemini Vision.
+                    # dernier recours, retrieval visuel via ColSmolVLM + un modèle
+                    # multimodal. Seule branche qui exige la vision — les documents
+                    # texte et ceux récupérés par OCR restent lisibles par n'importe
+                    # quel modèle, y compris local.
                     from app.services.colsmolvlm_service import index_visual_document, render_pdf_to_images
-                    from app.services.gemini_service import ask_gemini_vision
+                    from app.services.vision_service import (
+                        VisionNonSupportee, ask_vision, message_refus, supporte_vision,
+                    )
                     from app.services.session_service import set_session_type as _set_session_type
                     import io as _io
+
+                    if not supporte_vision(model):
+                        # Vérifié AVANT l'indexation ColSmolVLM : celle-ci est
+                        # coûteuse et n'aurait aucune utilité sans modèle capable
+                        # de lire les pages ensuite.
+                        yield json.dumps({
+                            "status": "error",
+                            "message": message_refus(model or "modèle par défaut"),
+                            "technical": f"Modèle sans capacité vision : {model}",
+                        }) + "\n"
+                        return
 
                     visual_result = index_visual_document(session_id, file_bytes)
                     if visual_result.get("status") != "ok":
@@ -421,8 +456,21 @@ async def upload_file(
                     ### 4. PROPOSITIONS
                     [Propose 3 questions ou analyses pertinentes suggérées par ce document]
                     """
-                    summary = ask_gemini_vision(summary_prompt, preview_png_bytes)
+                    try:
+                        summary = ask_vision(summary_prompt, preview_png_bytes, model=model)
+                    except VisionNonSupportee as exc:
+                        yield json.dumps({
+                            "status": "error",
+                            "message": str(exc),
+                            "technical": f"Modèle sans capacité vision : {model}",
+                        }) + "\n"
+                        return
                     add_to_history(session_id, "model", summary)
+
+                    # Document illisible en texte : le résumé issu de la vision est
+                    # la seule description exploitable pour titrer la session.
+                    titre = titre_depuis_document(filename, summary, model=model)
+                    rename_session(session_id, titre)
 
                     yield json.dumps({
                         "status": "processing",
@@ -436,6 +484,7 @@ async def upload_file(
                         "data": {
                             "type": "document_analyzed",
                             "session_id": session_id,
+                            "title": titre,
                             "filename": filename,
                             "chunks_indexed": 0,
                             "summary": summary
@@ -468,6 +517,11 @@ async def upload_file(
                 summary = ask_gemini(summary_prompt, model=model)
                 add_to_history(session_id, "model", summary)
 
+                # Le résumé qu'on vient de produire décrit le document mieux que
+                # son nom de fichier : on s'en sert pour titrer la session.
+                titre = titre_depuis_document(filename, summary or raw_context, model=model)
+                rename_session(session_id, titre)
+
                 # Étape 4 : Finalisation de la session
                 yield json.dumps({
                     "status": "processing",
@@ -481,6 +535,7 @@ async def upload_file(
                     "data": {
                         "type": "document_analyzed",
                         "session_id": session_id,
+                        "title": titre,
                         "filename": filename,
                         "chunks_indexed": chunks_indexed,
                         "has_embedded_table": has_embedded_table,

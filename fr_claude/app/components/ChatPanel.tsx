@@ -35,6 +35,9 @@ interface Props {
   uploadProgress?: UploadProgressState | null;
   onUploadClick?: () => void;
   onAssistantMessage?: (text: string) => void;
+  // Signale au parent qu'un modèle est en cours de génération ("start") puis
+  // terminé ("done", avec l'id si un modèle a été créé).
+  onModelActivity?: (activity: { status: "start" } | { status: "done"; modelId?: string | null }) => void;
 }
 
 // Icône associée à chaque phase annoncée par le backend (champ `phase`).
@@ -213,7 +216,7 @@ function TypingText({ text, speed = 8, onDone, onProposition, sources, onSourceC
   );
 }
 
-export default function ChatPanel({ sessionId, sourceCount, initialMessage, selectedModel, uploadProgress, onUploadClick, onAssistantMessage }: Props) {
+export default function ChatPanel({ sessionId, sourceCount, initialMessage, selectedModel, uploadProgress, onUploadClick, onAssistantMessage, onModelActivity }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
@@ -221,6 +224,8 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
   // Étape en cours annoncée par le backend, affichée à la place des trois points.
   const [activeStep, setActiveStep] = useState<{ phase: string; message: string } | null>(null);
   const [typingDone, setTypingDone] = useState<Set<number>>(new Set());
+  // Titre de la session, généré à l'import d'après le contenu du fichier.
+  const [sessionTitle, setSessionTitle] = useState<string>("");
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<ChatSource | null>(null);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -271,6 +276,9 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
   }, [initialMessage]);
 
   useEffect(() => {
+    // Le titre appartient à la session quittée : le vider tout de suite évite
+    // qu'il coiffe brièvement le contenu de la suivante.
+    setSessionTitle("");
     if (!sessionId) {
       setMessages([]);
       setTypingDone(new Set());
@@ -280,6 +288,10 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     (async () => {
       try {
         const data = await getSession(sessionId);
+        // « Nouvelle session » est le libellé par défaut en base : ne pas le
+        // hisser en gros titre au-dessus du résumé.
+        const titre = (data?.title || "").trim();
+        setSessionTitle(titre === "Nouvelle session" ? "" : titre);
         if (data.messages?.length) {
           setMessages(data.messages);
           setTypingDone(new Set(data.messages.map((_, i) => i)));
@@ -315,10 +327,20 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     setLoading(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    // Suivi de l'activité "génération de modèle" pour prévenir le parent.
+    let modelActivityStarted = false;
     try {
-      const data = await sendChatMessage(sessionId, text, selectedModel, controller.signal, setActiveStep);
+      const data = await sendChatMessage(sessionId, text, selectedModel, controller.signal, (step) => {
+        setActiveStep(step);
+        if (step.phase === "model_generating" && !modelActivityStarted) {
+          modelActivityStarted = true;
+          onModelActivity?.({ status: "start" });
+        }
+      });
       setMessages((m) => [...m, { role: "assistant", text: data.response, images: data.images || [], sources: data.sources || [] }]);
       onAssistantMessage?.(data.response);
+      if (modelActivityStarted) onModelActivity?.({ status: "done", modelId: data.model_id ?? null });
+      modelActivityStarted = false;
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === "AbortError") {
         setMessages((m) => [...m, { role: "assistant", text: "Réponse interrompue." }]);
@@ -329,6 +351,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       setLoading(false);
       setActiveStep(null);
       abortRef.current = null;
+      if (modelActivityStarted) onModelActivity?.({ status: "done", modelId: null });
     }
   };
 
@@ -497,6 +520,15 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
             <div className="flex h-full items-center justify-center px-6 text-center text-[14px]" style={{ color: "var(--text-dim)" }}>
               Votre source est prête. Posez votre première question.
             </div>
+          )}
+
+          {sessionTitle && messages.length > 0 && (
+            <h1
+              className="fc-fade-up mb-6 mt-1 text-[28px] font-bold leading-tight tracking-tight"
+              style={{ color: "var(--text-main)" }}
+            >
+              {sessionTitle}
+            </h1>
           )}
 
           {messages.map((msg, i) => (

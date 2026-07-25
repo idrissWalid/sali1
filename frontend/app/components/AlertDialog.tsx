@@ -67,7 +67,7 @@ const AlertDialogTitle = React.forwardRef<
 >(({ className, style, ...props }, ref) => (
   <AlertDialogPrimitive.Title
     ref={ref}
-    style={{ color: "var(--text-main)", fontFamily: "'Google Sans', sans-serif", ...style }}
+    style={{ color: "var(--text-main)", fontFamily: "var(--font-google-sans), sans-serif", ...style }}
     className={cn('text-lg font-semibold', className)}
     {...props}
   />

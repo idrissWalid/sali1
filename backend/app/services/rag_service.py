@@ -202,10 +202,11 @@ def retrieve_context(session_id: str, question: str, top_k: int = 4) -> str:
     context, _ = retrieve_context_with_sources(session_id, question, top_k)
     return context
 
-def _llm_summarize(prompt: str, model: str = "gemma2:latest") -> str:
+def _llm_summarize(prompt: str, model: str | None = None) -> str:
     try:
         from app.services.gemini_service import complete_text
-        return complete_text(prompt, model)
+        from app.core import config
+        return complete_text(prompt, model or config.get_default_model())
     except Exception as e:
         print("LLM summarization failed:", e)
         return ""
@@ -226,7 +227,7 @@ def get_document_chunks(session_id: str, max_chunks: int = 48) -> list[str]:
         return []
 
 
-def summarize_document(session_id: str, model: str = "gemma2:latest") -> str:
+def summarize_document(session_id: str, model: str | None = None) -> str:
     chunks = get_document_chunks(session_id)
     if not chunks:
         return ""

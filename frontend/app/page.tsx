@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -54,19 +53,26 @@ export default function Home() {
     setOpenUpload(() => handler);
   }, []);
 
-  const [models, setModels] = useState<string[]>(["gemma2:latest"]);
-  const [proprietaryModels, setProprietaryModels] = useState<string[]>(["gemini-3.1-flash-lite-preview"]);
+  const [models, setModels] = useState<string[]>([]);
+  const [proprietaryModels, setProprietaryModels] = useState<string[]>([]);
+  // Pas de modèle figé ici : la valeur vient de /api/llm-models (champ `default`,
+  // lui-même piloté par /api/settings/default-model) tant que l'utilisateur n'a
+  // rien choisi explicitement (localStorage).
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     if (typeof window !== "undefined") {
-      return localStorage.getItem("selected_model") || "gemma2:latest";
+      return localStorage.getItem("selected_model") || "";
     }
-    return "gemma2:latest";
+    return "";
   });
 
   // Modal & Dropdown visibility states
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isModelsOpen, setIsModelsOpen] = useState(false);
   const [generatedContent, setGeneratedContent] = useState<string>("");
+  // Génération de modèle dans le chat : pilote le placeholder animé + le
+  // rechargement de la liste des modèles dans le Studio.
+  const [chatModelPending, setChatModelPending] = useState(false);
+  const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [isShareOpen, setIsShareOpen] = useState(false);
   const [isAvatarOpen, setIsAvatarOpen] = useState(false);
   const [isNewSessionConfirmOpen, setIsNewSessionConfirmOpen] = useState(false);
@@ -116,13 +122,13 @@ export default function Home() {
         setProprietaryModels(data.proprietary);
       }
       const allModels = [...(data.models || []), ...(data.proprietary || [])];
-      if (allModels.length > 0) {
-        const savedModel = localStorage.getItem("selected_model");
-        if (savedModel && allModels.includes(savedModel)) {
-          setSelectedModel(savedModel);
-        } else {
-          setSelectedModel(allModels[0]);
-        }
+      const savedModel = localStorage.getItem("selected_model");
+      if (savedModel && allModels.includes(savedModel)) {
+        setSelectedModel(savedModel);
+      } else if (data.default) {
+        setSelectedModel(data.default);
+      } else if (allModels.length > 0) {
+        setSelectedModel(allModels[0]);
       }
     } catch (err) {
       console.error("Erreur lors du chargement des modèles LLM:", err);
@@ -311,36 +317,29 @@ export default function Home() {
         zIndex: 10,
       }}>
 
-        {/* Gauche : logo + nom */}
+        {/* Gauche : logo SALI AI */}
         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
           <div style={{
-            width: "34px", height: "34px",
+            height: "40px",
             borderRadius: "10px",
             overflow: "hidden",
             flexShrink: 0,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            background: "linear-gradient(135deg, rgba(138,180,248,0.15), rgba(167,139,250,0.1))",
+            background: "#ffffff",
+            padding: "4px 10px",
             border: "1px solid rgba(138,180,248,0.2)",
           }}>
             <Image
-              src="/logo.png"
-              alt="Logo"
-              width={32}
-              height={32}
-              style={{ objectFit: "contain", width: "auto", height: "auto" }}
+              src="/saliai-logo.jpeg"
+              alt="SALI AI"
+              width={120}
+              height={64}
+              priority
+              style={{ objectFit: "contain", height: "100%", width: "auto" }}
             />
           </div>
-          <span style={{
-            fontFamily: "'Google Sans',sans-serif",
-            fontSize: "16px",
-            fontWeight: 600,
-            color: "var(--text-main)",
-            letterSpacing: "-0.02em",
-          }}>
-            No-Code Data Intelligence
-          </span>
         </div>
 
         {/* Droite : boutons */}
@@ -413,7 +412,7 @@ export default function Home() {
                   border: "1px solid var(--border-color)",
                   color: "var(--text-muted)",
                   fontSize: "13px",
-                  fontFamily: "'Google Sans',sans-serif",
+                  fontFamily: "var(--font-google-sans), sans-serif",
                   background: "transparent",
                   cursor: "pointer",
                   transition: "background 0.15s, color 0.15s, border-color 0.15s, transform 0.12s",
@@ -526,11 +525,20 @@ export default function Home() {
               selectedModel={selectedModel}
               onUploadClick={() => openUpload?.()}
               onAssistantMessage={(text) => setGeneratedContent(text)}
+              onModelActivity={(activity) => {
+                if (activity.status === "start") {
+                  setChatModelPending(true);
+                } else {
+                  setChatModelPending(false);
+                  // Recharge la liste des modèles du Studio (le nouveau apparaît).
+                  setModelsRefreshKey((k) => k + 1);
+                }
+              }}
             />
           </Panel>
           <Separator style={{ width: "8px", background: "transparent", cursor: "col-resize", transition: "background 0.2s" }} />
           <Panel defaultSize={23} minSize={15} style={{ height: "100%" }}>
-            <StudioPanel sessionId={sessionId} generatedContent={generatedContent} openModels={() => setIsModelsOpen(true)} />
+            <StudioPanel sessionId={sessionId} generatedContent={generatedContent} chatModelPending={chatModelPending} modelsRefreshKey={modelsRefreshKey} />
           </Panel>
         </Group>
       </div>

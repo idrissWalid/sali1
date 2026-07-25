@@ -7,6 +7,8 @@ import {
   FileText,
   FolderOpen,
   LayoutDashboard,
+  LineChart,
+  Loader2,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { API_URL, downloadReport } from "../lib/api";
@@ -16,10 +18,25 @@ interface Props {
   sessionId: string | null;
   generatedContent?: string;
   openModels?: () => void;
+  chatModelPending?: boolean;
+  modelsRefreshKey?: number;
+}
+
+interface TrainedModel {
+  id: string;
+  name: string;
+  type: string;
+  created_at: string;
 }
 
 type ReportFormat = "pdf" | "word" | null;
-type TrainingType = "classification" | "regression" | "prediction" | null;
+type TrainingType = "classification" | "regression" | "prediction" | "timeseries" | null;
+
+interface TsCandidates {
+  date_columns: string[];
+  value_columns: string[];
+  feasible: boolean;
+}
 
 interface GeneratedItem {
   id: string;
@@ -117,7 +134,7 @@ function Tile({
   );
 }
 
-export default function StudioPanel({ sessionId, generatedContent, openModels }: Props) {
+export default function StudioPanel({ sessionId, generatedContent, openModels, chatModelPending = false, modelsRefreshKey = 0 }: Props) {
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [isTrainingOpen, setIsTrainingOpen] = useState(false);
   const [reportFormat, setReportFormat] = useState<ReportFormat>(null);
@@ -127,8 +144,16 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [placeholderIdx, setPlaceholderIdx] = useState(0);
   const [items, setItems] = useState<GeneratedItem[]>([]);
+  const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([]);
+  const [modalTraining, setModalTraining] = useState(false);
   const [feasibility, setFeasibility] = useState<ModelFeasibility>(NO_FEASIBILITY);
-  const anyModelPossible = feasibility.classification || feasibility.regression || feasibility.prediction;
+  const [tsCandidates, setTsCandidates] = useState<TsCandidates>({ date_columns: [], value_columns: [], feasible: false });
+  const [tsDateCol, setTsDateCol] = useState("");
+  const [tsValueCol, setTsValueCol] = useState("");
+  const [tsHorizon, setTsHorizon] = useState("12");
+  const [tsEngine, setTsEngine] = useState<"auto" | "timecopilot">("timecopilot");
+  const [isTrainingModel, setIsTrainingModel] = useState(false);
+  const anyModelPossible = feasibility.classification || feasibility.regression || feasibility.prediction || tsCandidates.feasible;
 
   useEffect(() => {
     const id = setInterval(() => setPlaceholderIdx((p) => (p + 1) % REPORT_PLACEHOLDERS.length), 3000);
@@ -136,6 +161,41 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
   }, []);
 
   useEffect(() => setItems([]), [sessionId]);
+
+  const refetchModels = async () => {
+    if (!sessionId) return;
+    try {
+      const res = await fetch(`${API_URL}/api/models/${sessionId}`);
+      if (res.ok) {
+        const d = await res.json();
+        setTrainedModels(d.models || []);
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // Liste réelle des modèles de la session, rechargée quand la session change
+  // ou quand le parent incrémente modelsRefreshKey (chat vient de générer).
+  useEffect(() => {
+    if (!sessionId) {
+      setTrainedModels([]);
+      return;
+    }
+    let cancelled = false;
+    fetch(`${API_URL}/api/models/${sessionId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setTrainedModels(data.models || []);
+      })
+      .catch(() => {
+        if (!cancelled) setTrainedModels([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, modelsRefreshKey]);
 
   // Détermine quels types de modèles sont proposables pour le dataset de la
   // session courante (sans lancer d'entraînement réel).
@@ -153,6 +213,27 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
       })
       .catch(() => {
         if (!cancelled) setFeasibility(NO_FEASIBILITY);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  // Colonnes candidates pour une série temporelle (axe date + valeur numérique).
+  useEffect(() => {
+    if (!sessionId) {
+      setTsCandidates({ date_columns: [], value_columns: [], feasible: false });
+      return;
+    }
+    let cancelled = false;
+    fetch(`${API_URL}/api/models/timeseries-candidates/${sessionId}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (cancelled || !data) return;
+        setTsCandidates({ date_columns: data.date_columns || [], value_columns: data.value_columns || [], feasible: !!data.feasible });
+      })
+      .catch(() => {
+        if (!cancelled) setTsCandidates({ date_columns: [], value_columns: [], feasible: false });
       });
     return () => {
       cancelled = true;
@@ -190,8 +271,45 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
     }
   };
 
-  const handleTrainingSubmit = () => {
-    if (!trainingType || !trainingName.trim()) return;
+  const handleTrainingSubmit = async () => {
+    if (!trainingType) return;
+
+    // ── Séries temporelles : entraînement réel (ARIMA complet / Modèles auto) ──
+    if (trainingType === "timeseries") {
+      if (!sessionId || !tsDateCol || !tsValueCol) return;
+      // Ferme la modale et affiche un placeholder animé dans « Éléments générés ».
+      setIsTrainingOpen(false);
+      setModalTraining(true);
+      try {
+        const model = typeof window !== "undefined" ? localStorage.getItem("selected_model") || undefined : undefined;
+        const res = await fetch(`${API_URL}/api/models/train-timeseries`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_id: sessionId,
+            date_col: tsDateCol,
+            value_col: tsValueCol,
+            horizon: parseInt(tsHorizon) || undefined,
+            engine: tsEngine,
+            model,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          throw new Error(data?.detail || "Échec de l'entraînement.");
+        }
+        // Modèle persisté : on recharge la liste → il apparaît, cliquable.
+        await refetchModels();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : "Erreur lors de l'entraînement.");
+      } finally {
+        setModalTraining(false);
+      }
+      return;
+    }
+
+    // ── Autres types : encore simulés ──
+    if (!trainingName.trim()) return;
     addItem({ id: `model-${Date.now()}`, title: trainingName.trim(), kind: "model" });
     openModels?.();
     setIsTrainingOpen(false);
@@ -216,7 +334,7 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
             span2
             disabled={!sessionId || !anyModelPossible}
             title={!sessionId ? "Chargez d'abord un jeu de données." : !anyModelPossible ? "Aucun modèle n'est compatible avec ce jeu de données." : undefined}
-            onClick={() => { setTrainingType(null); setTrainingName(""); setIsTrainingOpen(true); }}
+            onClick={() => { setTrainingType(null); setTrainingName(""); setTsDateCol(tsCandidates.date_columns[0] ?? ""); setTsValueCol(tsCandidates.value_columns[0] ?? ""); setTsEngine("auto"); setIsTrainingOpen(true); }}
           />
         </div>
 
@@ -230,7 +348,43 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
           </div>
 
           <div className="flex flex-col gap-2 overflow-y-auto px-4 pb-4">
-            {items.map((item) => (
+            {/* Placeholder animé : un modèle est en cours de génération. */}
+            {(chatModelPending || modalTraining) && (
+              <div
+                className="flex items-center gap-2.5 rounded-md border px-3 py-3"
+                style={{ borderColor: "var(--accent)", background: "var(--accent-soft)" }}
+              >
+                <Loader2 size={16} className="animate-spin" style={{ color: "var(--accent)" }} />
+                <span className="flex-1">
+                  <div className="text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>Génération du modèle en cours…</div>
+                  <div className="mt-0.5 text-[10px]" style={{ color: "var(--text-muted)" }}>Cela peut prendre jusqu’à ~2 minutes</div>
+                </span>
+              </div>
+            )}
+
+            {/* Modèles réels de la session (chat + modale) — cliquables. */}
+            {trainedModels.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => window.open(`/dashboard/model/${m.id}`, "_blank")}
+                className="flex items-center justify-between gap-2.5 rounded-md border px-3 py-3 text-left transition-colors hover:border-[var(--accent)]"
+                style={{ borderColor: "var(--border-muted)", background: "var(--bubble-ai)" }}
+              >
+                <span className="grid size-7 shrink-0 place-items-center rounded-md" style={{ color: "var(--accent)", background: "var(--accent-soft)" }}>
+                  {m.type === "timeseries" ? <LineChart size={15} strokeWidth={1.8} /> : <BrainCircuit size={15} strokeWidth={1.8} />}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <div className="truncate text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>{m.name}</div>
+                  <div className="mt-0.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
+                    {m.type === "timeseries" ? "Modèle • Série temporelle" : "Modèle"}
+                  </div>
+                </span>
+                <span className="shrink-0 text-[10px] font-bold" style={{ color: "var(--accent)" }}>Dashboard</span>
+              </button>
+            ))}
+
+            {/* Rapports générés (client). */}
+            {items.filter((it) => it.kind === "report").map((item) => (
               <button
                 key={item.id}
                 onClick={() => item.url && window.open(item.url, "_blank", "noopener,noreferrer")}
@@ -240,12 +394,18 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
                 <span className="flex-1">
                   <div className="text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>{item.title}</div>
                   <div className="mt-0.5 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                    {item.kind === "report" ? `Rapport • ${item.format?.toUpperCase()}` : "Modèle"}
+                    {`Rapport • ${item.format?.toUpperCase()}`}
                   </div>
                 </span>
                 <span className="text-[10px] font-bold" style={{ color: "var(--accent)" }}>Ouvrir</span>
               </button>
             ))}
+
+            {!chatModelPending && !modalTraining && trainedModels.length === 0 && items.filter((it) => it.kind === "report").length === 0 && !generatedContent && (
+              <div className="px-1 py-2 text-[12px]" style={{ color: "var(--text-dim)" }}>
+                Aucun élément généré pour l’instant. Générez un rapport ou entraînez un modèle.
+              </div>
+            )}
 
             {generatedContent && (
               <div className="rounded-md border p-3.5" style={{ borderColor: "var(--border-muted)", background: "var(--bubble-ai)" }}>
@@ -314,12 +474,13 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
           <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>Choisissez un type de modèle et donnez-lui un nom avant de lancer l&rsquo;entraînement.</p>
           <div className="flex flex-col gap-1.5">
             <label className="text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>Type de modèle</label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {(
                 [
                   { id: "classification" as const, label: "Classification", possible: feasibility.classification },
                   { id: "regression" as const, label: "Régression", possible: feasibility.regression },
                   { id: "prediction" as const, label: "Prédiction", possible: feasibility.prediction },
+                  { id: "timeseries" as const, label: "Séries temporelles", possible: tsCandidates.feasible },
                 ]
               ).map((opt) => (
                 <button
@@ -328,8 +489,9 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
                   disabled={!opt.possible}
                   onClick={() => setTrainingType(opt.id)}
                   title={opt.possible ? undefined : "Ce jeu de données n'a pas les colonnes nécessaires pour ce type de modèle."}
-                  className="flex-1 rounded-md border py-2.5 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                  className="rounded-md border py-2.5 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
                   style={{
+                    flex: "1 1 45%",
                     borderColor: trainingType === opt.id ? "var(--accent)" : "var(--border-muted)",
                     background: trainingType === opt.id ? "var(--accent-soft)" : "var(--bubble-ai)",
                     color: "var(--text-main)",
@@ -345,23 +507,59 @@ export default function StudioPanel({ sessionId, generatedContent, openModels }:
               </p>
             )}
           </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>Nom du modèle</label>
-            <input
-              value={trainingName}
-              onChange={(e) => setTrainingName(e.target.value)}
-              placeholder="Ex. modèle_vente_2026"
-              className="rounded-md border px-3.5 py-2.5 text-[13px]"
-              style={{ borderColor: "var(--border-muted)", background: "var(--bubble-ai)", color: "var(--text-main)" }}
-            />
-          </div>
+
+          {trainingType === "timeseries" ? (
+            <>
+              <div className="flex gap-2.5">
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <label className="text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>Colonne date</label>
+                  <select value={tsDateCol} onChange={(e) => setTsDateCol(e.target.value)} className="rounded-md border px-3 py-2.5 text-[13px]" style={{ borderColor: "var(--border-muted)", background: "var(--bubble-ai)", color: "var(--text-main)" }}>
+                    {tsCandidates.date_columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <label className="text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>Colonne valeur</label>
+                  <select value={tsValueCol} onChange={(e) => setTsValueCol(e.target.value)} className="rounded-md border px-3 py-2.5 text-[13px]" style={{ borderColor: "var(--border-muted)", background: "var(--bubble-ai)", color: "var(--text-main)" }}>
+                    {tsCandidates.value_columns.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-2.5">
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <label className="text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>Horizon (périodes)</label>
+                  <input type="number" min={1} value={tsHorizon} onChange={(e) => setTsHorizon(e.target.value)} className="rounded-md border px-3 py-2.5 text-[13px]" style={{ borderColor: "var(--border-muted)", background: "var(--bubble-ai)", color: "var(--text-main)" }} />
+                </div>
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <label className="text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>Moteur</label>
+                  <select value={tsEngine} onChange={(e) => setTsEngine(e.target.value as "auto" | "timecopilot")} className="rounded-md border px-3 py-2.5 text-[13px]" style={{ borderColor: "var(--border-muted)", background: "var(--bubble-ai)", color: "var(--text-main)" }}>
+                    <option value="timecopilot">Modèles auto</option>
+                    <option value="auto">ARIMA complet</option>
+                  </select>
+                </div>
+              </div>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+                « Modèles auto » met plusieurs modèles en concurrence et explique son choix. « ARIMA complet » suit la méthodologie détaillée (stationnarité, sélection, diagnostics des résidus, validation out-of-sample). Comptez jusqu&rsquo;à ~2 minutes.
+              </p>
+            </>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[12px] font-semibold" style={{ color: "var(--text-main)" }}>Nom du modèle</label>
+              <input
+                value={trainingName}
+                onChange={(e) => setTrainingName(e.target.value)}
+                placeholder="Ex. modèle_vente_2026"
+                className="rounded-md border px-3.5 py-2.5 text-[13px]"
+                style={{ borderColor: "var(--border-muted)", background: "var(--bubble-ai)", color: "var(--text-main)" }}
+              />
+            </div>
+          )}
           <button
             onClick={handleTrainingSubmit}
-            disabled={!trainingType || !trainingName.trim()}
+            disabled={!trainingType || isTrainingModel || (trainingType === "timeseries" ? (!tsDateCol || !tsValueCol) : !trainingName.trim())}
             className="rounded-md py-2.5 text-[13px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
             style={{ background: "var(--accent)" }}
           >
-            Entraîner
+            {isTrainingModel ? (trainingType === "timeseries" ? "Entraînement en cours…" : "Ouverture...") : "Entraîner"}
           </button>
         </div>
       </Modal>

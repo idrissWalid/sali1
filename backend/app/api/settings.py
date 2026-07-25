@@ -2,7 +2,10 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from app.core.config import PROVIDER_ENV_VARS, PROVIDER_MODELS, get_api_key, set_api_key
+from app.core.config import (
+    PROVIDER_ENV_VARS, PROVIDER_MODELS, get_api_key, set_api_key,
+    get_default_model, set_default_model,
+)
 from app.services.provider_test import verify_provider_key
 
 logger = logging.getLogger("app.settings")
@@ -14,6 +17,10 @@ class ApiKeyRequest(BaseModel):
     provider: str
     model: str
     api_key: str
+
+
+class DefaultModelRequest(BaseModel):
+    model: str
 
 
 @router.get("/settings/providers")
@@ -28,6 +35,20 @@ async def list_providers():
             for provider in PROVIDER_ENV_VARS
         ]
     }
+
+
+@router.get("/settings/default-model")
+async def get_default_model_setting():
+    return {"model": get_default_model()}
+
+
+@router.post("/settings/default-model")
+async def save_default_model_setting(payload: DefaultModelRequest):
+    model = payload.model.strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="Modèle manquant.")
+    set_default_model(model)
+    return {"status": "ok", "model": model}
 
 
 @router.post("/settings/api-key")

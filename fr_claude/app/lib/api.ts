@@ -41,7 +41,7 @@ export async function renameSession(sessionId: string, title: string): Promise<v
   if (!res.ok) throw new Error("Impossible de renommer la session.");
 }
 
-export async function listLlmModels(): Promise<{ models: string[]; proprietary: string[] }> {
+export async function listLlmModels(): Promise<{ models: string[]; proprietary: string[]; default?: string }> {
   const res = await fetch(`${API_URL}/api/llm-models`);
   if (!res.ok) throw new Error("Impossible de charger les modèles.");
   return res.json();
@@ -55,7 +55,7 @@ export async function sendChatMessage(
   /** Appelé à chaque étape annoncée par le backend (réflexion, génération de
    *  code, recherche de passages…) pour informer l'utilisateur pendant l'attente. */
   onStep?: (step: { phase: string; message: string }) => void
-): Promise<{ response: string; images: string[]; sources: ChatSource[] }> {
+): Promise<{ response: string; images: string[]; sources: ChatSource[]; model_id?: string | null }> {
   const res = await fetch(`${API_URL}/api/chat/stream`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -74,7 +74,7 @@ export async function sendChatMessage(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let result: { response: string; images: string[]; sources: ChatSource[] } | null = null;
+  let result: { response: string; images: string[]; sources: ChatSource[]; model_id?: string | null } | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -94,7 +94,7 @@ export async function sendChatMessage(
   }
 
   if (!result) throw new Error("Aucune réponse reçue du serveur.");
-  return { response: result.response, images: result.images ?? [], sources: result.sources ?? [] };
+  return { response: result.response, images: result.images ?? [], sources: result.sources ?? [], model_id: result.model_id ?? null };
 }
 
 export async function transcribeAudio(blob: Blob): Promise<string> {

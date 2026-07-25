@@ -1,0 +1,13 @@
+# Tournoi supervisé (régression / classification / classification déséquilibrée).
+# Tout le reste (scikit-learn, statsmodels, scipy) vient déjà de requirements.txt.
+#
+# imbalanced-learn n'apporte ici que BalancedRandomForestClassifier, qui
+# sous-échantillonne la classe majoritaire à chaque bootstrap — traitement du
+# déséquilibre plus direct que la seule repondération de scikit-learn.
+# Version épinglée : 0.14.2 exige scikit-learn>=1.4.2, compatible avec le 1.5.2
+# de la couche de base. Une version plus récente pourrait exiger sklearn 2.x et
+# casser toute l'image.
+#
+# Fichier séparé de requirements.txt à dessein : la couche Docker qui installe la
+# base reste ainsi en cache lors des rebuilds.
+imbalanced-learn==0.14.2

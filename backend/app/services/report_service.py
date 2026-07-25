@@ -2,6 +2,7 @@ import io
 import base64
 from datetime import datetime
 from app.services.gemini_service import complete_text
+from app.core import config
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
@@ -23,13 +24,14 @@ def draft_report_with_llm(
     chat_history: list,
     title: str,
     institution: str,
-    model: str = "gemma2:latest"
+    model: str | None = None
 ) -> dict:
     """
     Demande à Gemini de rédiger un rapport structuré
     à partir des éléments de la session.
     Retourne un dict avec les sections du rapport.
     """
+    model = model or config.get_default_model()
     history_summary = "\n".join([
         f"[{m['role'].upper()}] {m['text'][:500]}"
         for m in chat_history

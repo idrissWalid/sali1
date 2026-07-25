@@ -1,6 +1,7 @@
 from app.services.sandbox_service import execute_code, validate_output
 from app.services.gemini_service import complete_text
 from app.services.model_specs import ModelSpec
+from app.core import config
 
 MAX_ATTEMPTS = 3
 
@@ -11,13 +12,14 @@ def run_with_autocorrect(
     question: str,
     data_context: str,
     spec: ModelSpec = None,
-    model: str = "gemma2:latest"
+    model: str | None = None
 ) -> dict:
     """
     Exécute le code, et si erreur ou résultats suspects,
     demande à Gemini de corriger et relance. Max 3 tentatives.
     Retourne : { output, images, error, attempts }
     """
+    model = model or config.get_default_model()
     code = initial_code
     last_result = None
 
@@ -55,12 +57,19 @@ def run_with_autocorrect(
                 data_context=data_context,
                 error_msg=result["error"]["technical"],
                 model=model,
+                spec=spec,
             )
 
     return last_result
 
 
-def _ask_correction(code: str, question: str, data_context: str, error_msg: str, model: str = "gemma2:latest") -> str:
+def _ask_correction(code: str, question: str, data_context: str, error_msg: str, model: str | None = None, spec: ModelSpec = None) -> str:
+    model = model or config.get_default_model()
+    # Réinjecte la méthodologie/le squelette complet (spec.prompt_fragment), pas
+    # seulement l'erreur : sinon une correction ponctuelle "répare" le bug signalé
+    # mais peut faire régresser d'autres parties de la méthodologie (ex. gates
+    # ou clés obligatoires) qui ne sont plus sous les yeux du modèle.
+    methodology_reminder = f"\nRAPPEL DE LA MÉTHODOLOGIE À RESPECTER INTÉGRALEMENT (ne régresse sur aucun point ci-dessous en corrigeant) :\n{spec.prompt_fragment}\n" if spec else ""
     prompt = f"""
 Tu as généré ce code Python pour répondre à : "{question}"
 
@@ -71,8 +80,8 @@ CODE EXÉCUTÉ :
 
 ERREUR OU PROBLÈME DÉTECTÉ :
 {error_msg}
-
-Corrige le code pour résoudre ce problème.
+{methodology_reminder}
+Corrige le code pour résoudre ce problème précis, SANS supprimer ni simplifier les autres étapes de la méthodologie ci-dessus (toutes les clés obligatoires de metrics.json doivent rester présentes).
 Le dataframe est dans la variable `df`.
 Réponds UNIQUEMENT avec le code Python corrigé, sans explication ni markdown.
 """

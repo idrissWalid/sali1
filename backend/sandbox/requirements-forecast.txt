@@ -1,0 +1,8 @@
+# Moteur de prévision automatique (AutoARIMA / AutoETS / AutoTheta / SeasonalNaive).
+# Fonctionne entièrement hors ligne : c'est ce qui permet de l'exécuter dans le
+# sandbox en --network=none, contrairement à l'agent TimeCopilot, qui exige l'API
+# d'un LLM et le téléchargement de poids depuis HuggingFace.
+#
+# Fichier séparé de requirements.txt à dessein : la couche Docker qui installe la
+# base (pandas, scikit-learn, mljar…) reste ainsi en cache lors des rebuilds.
+statsforecast==2.0.2

@@ -10,6 +10,7 @@ import {
   Loader2,
   Moon,
   Rows3,
+  Sparkles,
   Sun,
   Table2,
 } from "lucide-react";
@@ -30,7 +31,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { getDashboardData } from "../../lib/api";
+import { API_URL, getDashboardData } from "../../lib/api";
 import type { DashboardData } from "../../lib/types";
 
 const COLORS = ["#34d399", "#8b7cf6", "#60a5fa", "#f59e0b", "#f87171", "#22d3ee", "#a3e635", "#f472b6", "#fb923c"];
@@ -69,6 +70,10 @@ export default function DashboardPage() {
   const [selectedDataset, setSelectedDataset] = useState("");
   // Granularité temporelle choisie manuellement ; vide = celle proposée par défaut.
   const [granularity, setGranularity] = useState("");
+  // Interprétation textuelle de la variable sélectionnée (générée par le LLM).
+  const [interpretation, setInterpretation] = useState("");
+  const [interpretLoading, setInterpretLoading] = useState(false);
+  const [interpretError, setInterpretError] = useState("");
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -87,6 +92,41 @@ export default function DashboardPage() {
       .catch((err) => setError(err instanceof Error ? err.message : "Erreur de récupération"))
       .finally(() => setLoading(false));
   }, [sessionId, selectedDataset]);
+
+  // Interprétation de la variable sélectionnée : rechargée à chaque changement
+  // de variable ou de jeu de données, pour que le texte suive le graphique.
+  useEffect(() => {
+    if (!sessionId || !selectedVar || !data) {
+      setInterpretation("");
+      return;
+    }
+    let cancelled = false;
+    setInterpretLoading(true);
+    setInterpretError("");
+    setInterpretation("");
+
+    const model = typeof window !== "undefined" ? localStorage.getItem("selected_model") || "" : "";
+    const params = new URLSearchParams({ variable: selectedVar });
+    if (data.dataset_id) params.set("dataset_id", data.dataset_id);
+    if (model) params.set("model", model);
+
+    fetch(`${API_URL}/api/dashboard/interpret/${sessionId}?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("Erreur"))))
+      .then((json) => {
+        if (!cancelled) setInterpretation(json.interpretation || "");
+      })
+      .catch(() => {
+        if (!cancelled) setInterpretError("Interprétation indisponible pour le moment.");
+      })
+      .finally(() => {
+        if (!cancelled) setInterpretLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, selectedVar, data?.dataset_id]);
 
   if (loading) {
     return (
@@ -340,6 +380,31 @@ export default function DashboardPage() {
                   </LineChart>
                 </ResponsiveContainer>
               ) : null}
+            </div>
+
+            {/* Analyse & interprétation de la variable — change avec la sélection */}
+            <div className="mt-6 border-t pt-5" style={{ borderColor: "var(--border-muted)" }}>
+              <div className="mb-3 flex items-center gap-2">
+                <Sparkles size={16} style={{ color: "var(--accent)" }} />
+                <h3 className="text-[13px] font-bold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                  Analyse &amp; interprétation
+                </h3>
+              </div>
+              {interpretLoading ? (
+                <div className="flex items-center gap-2 text-[13px]" style={{ color: "var(--text-muted)" }}>
+                  <Loader2 className="animate-spin" size={16} /> Génération de l&rsquo;interprétation…
+                </div>
+              ) : interpretError ? (
+                <p className="text-[13px] italic" style={{ color: "var(--text-dim)" }}>{interpretError}</p>
+              ) : interpretation ? (
+                <p className="whitespace-pre-line text-[13px] leading-relaxed" style={{ color: "var(--text-main)" }}>
+                  {interpretation}
+                </p>
+              ) : (
+                <p className="text-[13px] italic" style={{ color: "var(--text-dim)" }}>
+                  Sélectionnez une variable pour afficher son interprétation.
+                </p>
+              )}
             </div>
           </div>
         </div>

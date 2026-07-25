@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { toggleTheme, useTheme } from "@/hooks/use-theme";
 import { useParams } from "next/navigation";
 import { 
   BarChart, Bar, PieChart, Pie, LineChart, Line, XAxis, YAxis, 
   CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell 
 } from "recharts";
-import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy, Sun, Moon } from "lucide-react";
+import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy, Sun, Moon, Sparkles } from "lucide-react";
 
 // Colors for charts
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#d0ed57', '#a4de6c'];
@@ -57,37 +58,16 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedVar, setSelectedVar] = useState<string>("");
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  // Le thème vit dans l'attribut data-theme de <html> : on s'y abonne au lieu de
+  // le recopier dans un state depuis un effet (rendu en cascade au montage).
+  const theme = useTheme();
   const [selectedDataset, setSelectedDataset] = useState<string>("");
   // Granularité temporelle choisie manuellement ; vide = celle proposée par défaut.
   const [granularity, setGranularity] = useState<string>("");
-
-  useEffect(() => {
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.attributeName === "data-theme") {
-          const newTheme = document.documentElement.getAttribute("data-theme") as "dark" | "light";
-          if (newTheme) setTheme(newTheme);
-        }
-      });
-    });
-    observer.observe(document.documentElement, { attributes: true });
-    
-    const currentTheme = document.documentElement.getAttribute("data-theme") as "dark" | "light" | null;
-    if (currentTheme) {
-      setTheme(currentTheme);
-    } else {
-      setTheme("dark");
-    }
-    
-    return () => observer.disconnect();
-  }, []);
-
-  const toggleTheme = () => {
-    const newTheme = theme === "dark" ? "light" : "dark";
-    document.documentElement.setAttribute("data-theme", newTheme);
-    setTheme(newTheme);
-  };
+  // Interprétation textuelle de la variable sélectionnée (générée par le LLM).
+  const [interpretation, setInterpretation] = useState<string>("");
+  const [interpretLoading, setInterpretLoading] = useState(false);
+  const [interpretError, setInterpretError] = useState("");
 
   useEffect(() => {
     const fetchData = async () => {
@@ -111,6 +91,52 @@ export default function DashboardPage() {
     };
     if (sessionId) fetchData();
   }, [sessionId, selectedDataset]);
+
+  // Interprétation de la variable sélectionnée : rechargée à chaque changement
+  // de variable ou de jeu de données, pour que le texte suive toujours le
+  // graphique affiché.
+  // Le texte affiché doit être purgé DÈS que la variable change, pas au tour de
+  // rendu suivant : sinon l'ancienne interprétation reste sous le nouveau
+  // graphique. On ajuste donc l'état pendant le rendu (motif React documenté)
+  // plutôt que depuis un effet, qui provoquerait un rendu en cascade.
+  const cleInterpretation = `${sessionId ?? ""}|${selectedVar}|${data?.dataset_id ?? ""}`;
+  const [cleInterpretationPrec, setCleInterpretationPrec] = useState(cleInterpretation);
+  if (cleInterpretation !== cleInterpretationPrec) {
+    setCleInterpretationPrec(cleInterpretation);
+    setInterpretation("");
+    setInterpretError("");
+    setInterpretLoading(Boolean(sessionId && selectedVar && data));
+  }
+
+  useEffect(() => {
+    if (!sessionId || !selectedVar || !data) {
+      return;
+    }
+    let cancelled = false;
+
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const model = typeof window !== "undefined" ? localStorage.getItem("selected_model") || "" : "";
+    const params = new URLSearchParams({ variable: selectedVar });
+    if (data.dataset_id) params.set("dataset_id", data.dataset_id);
+    if (model) params.set("model", model);
+
+    fetch(`${apiUrl}/api/dashboard/interpret/${sessionId}?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("Erreur"))))
+      .then((json) => {
+        if (!cancelled) setInterpretation(json.interpretation || "");
+      })
+      .catch(() => {
+        if (!cancelled) setInterpretError("Interprétation indisponible pour le moment.");
+      })
+      .finally(() => {
+        if (!cancelled) setInterpretLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, selectedVar, data?.dataset_id]);
 
   if (loading) return (
     <div className="flex h-screen w-full items-center justify-center bg-gray-50 dark:bg-[#111]">
@@ -417,6 +443,31 @@ export default function DashboardPage() {
                   </LineChart>
                 </ResponsiveContainer>
               ) : null}
+            </div>
+
+            {/* Analyse & interprétation de la variable — change avec la sélection */}
+            <div className="dashboard-interpretation mt-6 border-t border-gray-100 dark:border-gray-800 pt-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-4 h-4 text-blue-500" />
+                <h3 className="text-sm font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">
+                  Analyse & interprétation
+                </h3>
+              </div>
+              {interpretLoading ? (
+                <div className="flex items-center gap-2 text-gray-500 dark:text-gray-400 text-sm">
+                  <Loader2 className="w-4 h-4 animate-spin" /> Génération de l&apos;interprétation…
+                </div>
+              ) : interpretError ? (
+                <p className="text-sm text-gray-400 italic">{interpretError}</p>
+              ) : interpretation ? (
+                <p className="text-sm leading-relaxed text-gray-700 dark:text-gray-300 whitespace-pre-line">
+                  {interpretation}
+                </p>
+              ) : (
+                <p className="text-sm text-gray-400 italic">
+                  Sélectionnez une variable pour afficher son interprétation.
+                </p>
+              )}
             </div>
           </div>
         </div>

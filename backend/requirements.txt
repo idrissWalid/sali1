@@ -15,7 +15,12 @@ numpy==1.26.4
 numba<0.59.0
 setuptools<70
 seaborn
-scikit-learn
+# Version alignée sur celle du sandbox (backend/sandbox/requirements.txt).
+# Le tournoi supervisé sérialise son pipeline DANS le sandbox et le backend le
+# recharge pour la simulation : un écart de version casse le dépicklage
+# (« Can't get attribute '_RemainderColsList' »). Les deux fichiers doivent
+# donc être modifiés ensemble.
+scikit-learn==1.5.2
 statsmodels
 openpyxl
 python-dotenv
@@ -27,7 +32,12 @@ httpx
 ydata-profiling==4.15.1
 docker
 pandasai
-timecopilot
+# ATTENTION : `timecopilot` ne doit PAS figurer ici. Ses contraintes sont
+# incompatibles avec deux dépendances de ce venv, sans version commune possible :
+#   - timecopilot exige transformers<5, colpali-engine exige transformers>=5.3
+#   - timecopilot exige openai>=1.99.7, pandasai 0.4.0 exige openai<0.28
+# L'installer ici rétrograde transformers et casse l'indexation visuelle
+# (ColSmolVLM). Il vit dans un venv dédié : voir requirements-timecopilot.txt.
 tf-keras
 openai-whisper
 soundfile

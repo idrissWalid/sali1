@@ -15,6 +15,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Couche séparée : ajouter une dépendance ici ne réinstalle pas toute la base.
+COPY requirements-forecast.txt .
+RUN pip install --no-cache-dir --timeout 120 --retries 10 -r requirements-forecast.txt
+
+# Idem pour le tournoi supervisé, en dernier : c'est la couche la plus susceptible
+# d'évoluer, la placer ici garde les deux précédentes en cache.
+COPY requirements-supervised.txt .
+RUN pip install --no-cache-dir --timeout 120 --retries 10 -r requirements-supervised.txt
+
 # Copier le runner
 COPY runner.py .
 

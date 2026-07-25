@@ -32,7 +32,7 @@ export default function SettingsModal({
 
   // Settings states
   const [lang, setLang] = useState("fr");
-  const [aiModel, setAiModel] = useState(selectedModel || "gemma2:latest");
+  const [aiModel, setAiModel] = useState(selectedModel || "");
   const [temperature, setTemperature] = useState(0.2);
   const [maxTokens, setMaxTokens] = useState(2048);
   const [chunkSize, setChunkSize] = useState(500);
@@ -68,12 +68,13 @@ export default function SettingsModal({
   }, [isApiDialogOpen]);
 
   // Toujours garder un modèle sélectionné cohérent avec le fournisseur choisi.
-  useEffect(() => {
-    const available = providerModels[apiProvider] || [];
-    if (available.length > 0 && !available.includes(apiModelName)) {
-      setApiModelName(available[0]);
-    }
-  }, [apiProvider, providerModels, apiModelName]);
+  // Ajusté pendant le rendu (motif React documenté) plutôt que dans un effet :
+  // via un effet, l'interface affichait un instant le modèle de l'ancien
+  // fournisseur avant de se corriger, au prix d'un rendu supplémentaire.
+  const modelesDuFournisseur = providerModels[apiProvider] || [];
+  if (modelesDuFournisseur.length > 0 && !modelesDuFournisseur.includes(apiModelName)) {
+    setApiModelName(modelesDuFournisseur[0]);
+  }
 
   const clearCache = () => {
     alert("Base de données vectorielle et cache vidés avec succès !");
@@ -211,7 +212,7 @@ export default function SettingsModal({
                       </optgroup>
                     )}
                     {models.length === 0 && proprietaryModels.length === 0 && (
-                      <option value="gemma2:latest">gemma2:latest</option>
+                      <option value="" disabled>Chargement des modèles…</option>
                     )}
                   </select>
                 </div>

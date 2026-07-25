@@ -27,6 +27,27 @@ PROVIDER_MODELS = {
 # Conservé pour compatibilité avec le code existant qui importe cette constante.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# Modèle LLM utilisé par défaut dans toute l'app quand aucun modèle n'est
+# explicitement choisi par l'utilisateur (chat, entraînement de modèles, etc.).
+# Configurable via /api/settings/default-model (persisté dans .env), donc modifiable
+# sans redéploiement — d'où la lecture de l'env var à chaque appel plutôt qu'une
+# constante figée à l'import.
+DEFAULT_MODEL_ENV_VAR = "DEFAULT_LLM_MODEL"
+FALLBACK_DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+
+
+def get_default_model() -> str:
+    return os.getenv(DEFAULT_MODEL_ENV_VAR) or FALLBACK_DEFAULT_MODEL
+
+
+def set_default_model(value: str) -> None:
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("Modèle par défaut vide.")
+    ENV_PATH.touch(exist_ok=True)
+    _dotenv_set_key(str(ENV_PATH), DEFAULT_MODEL_ENV_VAR, value)
+    os.environ[DEFAULT_MODEL_ENV_VAR] = value
+
 
 def get_api_key(provider: str) -> str | None:
     env_var = PROVIDER_ENV_VARS.get(provider)

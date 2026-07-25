@@ -1,5 +1,6 @@
 # Backend
 backend/venv/
+.venv/
 backend/__pycache__/
 backend/app/__pycache__/
 backend/app/api/__pycache__/
@@ -34,5 +35,15 @@ backend/models/
 data/chroma/
 data/sessions.db
 data/uploads/
+data/visual_docs/
+data/models/
 cache.db
 backend/cache.db
+
+# Venv dédié à TimeCopilot (~5 Go) — dépendances incompatibles avec le venv
+# principal, voir backend/requirements-timecopilot.txt
+backend/.venv-timecopilot/
+
+# Claude Code : état local (verrou de tâche planifiée, permissions locales) —
+# spécifique à la machine, jamais partagé.
+.claude/

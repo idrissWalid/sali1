@@ -31,9 +31,12 @@ export default function Home() {
     setOpenUpload(() => handler);
   }, []);
 
-  const [models, setModels] = useState<string[]>(["gemma2:latest"]);
-  const [proprietaryModels, setProprietaryModels] = useState<string[]>(["gemini-3.1-flash-lite-preview"]);
-  const [selectedModel, setSelectedModel] = useState("gemma2:latest");
+  const [models, setModels] = useState<string[]>([]);
+  const [proprietaryModels, setProprietaryModels] = useState<string[]>([]);
+  // Pas de modèle figé ici : la valeur vient de /api/llm-models (champ `default`,
+  // lui-même piloté par /api/settings/default-model) tant que l'utilisateur n'a
+  // rien choisi explicitement (localStorage, voir fetchModels).
+  const [selectedModel, setSelectedModel] = useState("");
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isModelsOpen, setIsModelsOpen] = useState(false);
@@ -42,6 +45,9 @@ export default function Home() {
   const [isNewSessionConfirmOpen, setIsNewSessionConfirmOpen] = useState(false);
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [generatedContent, setGeneratedContent] = useState("");
+  // Génération de modèle dans le chat : placeholder animé + refresh de la liste.
+  const [chatModelPending, setChatModelPending] = useState(false);
+  const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
 
   const avatarRef = useRef<HTMLDivElement>(null);
 
@@ -76,9 +82,13 @@ export default function Home() {
       setModels(localModels);
       setProprietaryModels(proprietary);
       const all = [...localModels, ...proprietary];
-      if (all.length > 0) {
-        const saved = localStorage.getItem("selected_model");
-        setSelectedModel(saved && all.includes(saved) ? saved : all[0]);
+      const saved = localStorage.getItem("selected_model");
+      if (saved && all.includes(saved)) {
+        setSelectedModel(saved);
+      } else if (data.default) {
+        setSelectedModel(data.default);
+      } else if (all.length > 0) {
+        setSelectedModel(all[0]);
       }
     } catch (err) {
       console.error(err);
@@ -271,11 +281,19 @@ export default function Home() {
               uploadProgress={uploadProgress}
               onUploadClick={() => openUpload?.()}
               onAssistantMessage={setGeneratedContent}
+              onModelActivity={(activity) => {
+                if (activity.status === "start") {
+                  setChatModelPending(true);
+                } else {
+                  setChatModelPending(false);
+                  setModelsRefreshKey((k) => k + 1);
+                }
+              }}
             />
           </Panel>
           <Separator style={{ width: "8px", background: "transparent", cursor: "col-resize" }} />
           <Panel defaultSize={23} minSize={16} style={{ height: "100%" }}>
-            <StudioPanel sessionId={sessionId} generatedContent={generatedContent} openModels={() => setIsModelsOpen(true)} />
+            <StudioPanel sessionId={sessionId} generatedContent={generatedContent} openModels={() => setIsModelsOpen(true)} chatModelPending={chatModelPending} modelsRefreshKey={modelsRefreshKey} />
           </Panel>
         </Group>
       </div>

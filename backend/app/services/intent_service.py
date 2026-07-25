@@ -1,4 +1,5 @@
 from app.services.gemini_service import complete_text
+from app.core import config
 
 INTENT_PROMPT = """Classifie la demande suivante en UN SEUL MOT parmi ces options :
 - visualisation : l'utilisateur veut un graphique, une courbe, une distribution visuelle, un diagramme, un plot
@@ -14,7 +15,8 @@ Réponds UNIQUEMENT par un seul mot parmi la liste ci-dessus, sans ponctuation n
 Demande : "{message}"
 """
 
-def detect_intent(message: str, model: str = "gemma2:latest") -> str:
+def detect_intent(message: str, model: str | None = None) -> str:
+    model = model or config.get_default_model()
     try:
         prompt = INTENT_PROMPT.format(message=message)
         response_text = complete_text(prompt, model)

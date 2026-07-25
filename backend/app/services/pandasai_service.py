@@ -21,6 +21,7 @@ import pandas as pd
 from pandasai.llm.base import LLM
 
 from app.services.gemini_service import complete_text
+from app.core import config
 
 
 # ── Adaptateur LLM compatible avec pandasai 0.4.0 ─────────────────────────────
@@ -52,7 +53,7 @@ def _load_df(file_bytes: bytes, filename: str) -> pd.DataFrame:
 
 # ── Service principal PandasAI ────────────────────────────────────────────────
 
-def ask_pandasai(file_bytes: bytes, filename: str, question: str, model: str = "gemini-3.1-flash-lite-preview") -> dict:
+def ask_pandasai(file_bytes: bytes, filename: str, question: str, model: str | None = None) -> dict:
     """
     Répond à une question de statistiques descriptives via PandasAI.
 
@@ -68,6 +69,7 @@ def ask_pandasai(file_bytes: bytes, filename: str, question: str, model: str = "
             images (list[str]) — Graphiques base64 si générés
             error  (dict|None) — Erreur éventuelle
     """
+    model = model or config.get_default_model()
     try:
         df = _load_df(file_bytes, filename)
     except Exception as exc:

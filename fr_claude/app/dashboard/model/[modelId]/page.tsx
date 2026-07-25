@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getModelInfo, predictModel } from "../../../lib/api";
 import type { ModelInfo } from "../../../lib/types";
+import TimeSeriesModelView, { TimeSeriesReport } from "../../../components/TimeSeriesModelView";
 
 export default function ModelDashboard() {
   const { modelId } = useParams<{ modelId: string }>();
@@ -58,6 +59,16 @@ export default function ModelDashboard() {
         <p>{error}</p>
         <button onClick={() => router.back()} className="mt-4 rounded-lg border px-4 py-2" style={{ borderColor: "var(--border-color)" }}>Retour</button>
       </div>
+    );
+  }
+
+  // Vue dédiée pour les modèles de séries temporelles (rapport gates + prévision).
+  if (model.type === "timeseries") {
+    return (
+      <TimeSeriesModelView
+        model={{ ...model, metrics: model.metrics as TimeSeriesReport }}
+        onBack={() => router.back()}
+      />
     );
   }
 

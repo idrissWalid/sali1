@@ -6,9 +6,10 @@ import asyncio
 import json
 from app.services.gemini_service import ask_gemini, generate_visualization_code
 from app.services.ml_service import generate_ml_code, generate_ml_interpretation, detect_model_family
-from app.services.model_specs import MODEL_SPECS
+from app.services.model_specs import MODEL_SPECS, ModelFamily
 from app.services.intent_service import detect_intent
 from app.services.code_pipeline import run_with_autocorrect
+
 from app.services.session_service import (
     get_session, add_to_history, get_history,
     get_data_context, get_session_type,
@@ -20,10 +21,19 @@ router = APIRouter()
 
 DATASET_INTENTS = ("stat_descriptive", "series_temporelles", "visualisation", "ml", "analyse")
 
+# Familles supervisées : la cible est connue, plusieurs modèles peuvent donc être
+# mis en concurrence et départagés sur des métriques comparables. Clustering et
+# analyse factorielle en sont exclus — sans cible, il n'y a rien à départager.
+_FAMILLES_SUPERVISEES = {
+    ModelFamily.LINEAR_REGRESSION,
+    ModelFamily.LOGISTIC_REGRESSION,
+    ModelFamily.TREE_ENSEMBLE,
+}
+
 class ChatRequest(BaseModel):
     session_id: str
     message: str
-    model: Optional[str] = "gemma2:latest"
+    model: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -42,7 +52,7 @@ def _step(phase: str, message: str) -> dict:
 
 
 async def _run_dataset_intent(intent, session_id, message, model, history, file_bytes, filename, data_context):
-    """Exécute l'intention détectée (pandasai / timecopilot / sandbox de code)
+    """Exécute l'intention détectée (pandasai / séries temporelles / sandbox de code)
     sur un dataset — qu'il s'agisse du fichier principal d'une session tabulaire
     ou d'un tableau attaché à une session document.
 
@@ -94,31 +104,54 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
         yield {"type": "result", "response": response, "images": images}
         return
 
-    # ── Séries temporelles via TimeCopilot ──
+    # ── Séries temporelles : pipeline rigoureux ARIMA/SARIMA (méthodologie A–H),
+    #    repli sur le moteur de prévision automatique. Dans les deux cas un modèle
+    #    est sauvegardé (dashboard). ──
     if intent == "series_temporelles":
         if file_bytes:
-            from app.services.timeseries_service import ask_timecopilot
-            yield _step("compute", "Analyse de la série temporelle…")
-            result = ask_timecopilot(file_bytes, filename, message)
+            from app.services.timeseries_pipeline import run_rigorous_timeseries, run_autoforecast_timeseries
+            from app.services.timeseries_service import infer_series_columns
 
-            if result["error"]:
-                yield _step("thinking", "Réflexion…")
-                response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
-            else:
-                images = result.get("images", [])
-                raw_output = result["output"]
+            # Signale au frontend qu'un modèle est en cours de génération
+            # (placeholder animé dans « Éléments générés »).
+            yield {"type": "step", "phase": "model_generating", "message": "Modélisation rigoureuse (ARIMA/SARIMA, stationnarité, gates)…"}
+            ts = run_rigorous_timeseries(
+                question=message,
+                data_context=data_context,
+                file_bytes=file_bytes,
+                filename=filename,
+                session_id=session_id,
+                history=history,
+                model=model,
+            )
 
-                interp_prompt = f"""
-{data_context}
-L'utilisateur a demandé : {message}
-Résultat de l'analyse de séries temporelles : {raw_output}
+            if ts["ok"]:
+                yield {"type": "result", "response": ts["response"], "images": ts["images"], "model_id": ts.get("model_id"), "model_type": "timeseries"}
+                return
 
-Présente ce résultat de façon claire et accessible en français (2-4 phrases).
-Explique les tendances temporelles ou les prévisions identifiées.
-"""
-                yield _step("interpreting", "Interprétation des résultats…")
-                interpretation = ask_gemini(prompt=interp_prompt, history=history, model=model)
-                response = f"{raw_output}\n\n---\n\n{interpretation}" if raw_output and raw_output != "Aucun résultat retourné." else interpretation
+            # Repli : moteur de prévision automatique (également sauvegardé comme
+            # modèle avec dashboard). En chat l'utilisateur n'a désigné aucune
+            # colonne, on déduit donc la série de la structure du fichier.
+            date_col, value_col = infer_series_columns(file_bytes, filename)
+            if date_col and value_col:
+                yield {"type": "step", "phase": "model_generating", "message": "Repli sur la prévision automatique…"}
+                tc = run_autoforecast_timeseries(
+                    question=message,
+                    file_bytes=file_bytes,
+                    filename=filename,
+                    session_id=session_id,
+                    data_context=data_context,
+                    history=history,
+                    model=model,
+                    date_col=date_col,
+                    value_col=value_col,
+                )
+                if tc["ok"]:
+                    yield {"type": "result", "response": tc["response"], "images": tc["images"], "model_id": tc.get("model_id"), "model_type": "timeseries"}
+                    return
+
+            yield _step("thinking", "Réflexion…")
+            response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
         else:
             yield _step("thinking", "Réflexion…")
             response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
@@ -133,8 +166,37 @@ Explique les tendances temporelles ou les prévisions identifiées.
         elif intent == "ml":
             yield _step("thinking", "Choix du type de modèle…")
             family = detect_model_family(message, model)
+
+            # Régression et classification passent par le tournoi supervisé :
+            # tous les modèles de la famille sont mis en concurrence et le
+            # meilleur est livré, sans que le LLM ne génère de code. Clustering
+            # et analyse factorielle ne sont pas supervisés et gardent le
+            # chemin historique.
+            if family in _FAMILLES_SUPERVISEES:
+                from app.services.supervised_pipeline import run_supervised_tournament
+
+                yield {"type": "step", "phase": "model_generating",
+                       "message": "Mise en concurrence des modèles…"}
+                res = run_supervised_tournament(
+                    question=message, file_bytes=file_bytes, filename=filename,
+                    session_id=session_id, data_context=data_context,
+                    history=history, model=model,
+                )
+                if not res.get("ok"):
+                    detail = res.get("technical") or ""
+                    reponse = res.get("error", "Le tournoi a échoué.")
+                    if detail:
+                        reponse = f"{reponse}\n\n```\n{str(detail)[:800]}\n```"
+                    yield {"type": "result", "response": reponse, "images": [], "sources": []}
+                    return
+                yield {"type": "result", "response": res["response"],
+                       "images": res.get("images", []), "model_id": res.get("model_id"),
+                       "model_type": "supervised"}
+                return
+
             spec = MODEL_SPECS[family]
-            yield _step("coding", f"Génération du code du modèle ({family})…")
+            # Signale le début de génération d'un modèle (placeholder animé).
+            yield {"type": "step", "phase": "model_generating", "message": f"Génération du code du modèle ({family})…"}
             code = generate_ml_code(message, data_context, family, history, model)
         else:
             yield _step("coding", "Génération du code d'analyse…")
@@ -162,10 +224,13 @@ Explique les tendances temporelles ou les prévisions identifiées.
             else:
                 images = result["images"]
                 models_data = result.get("models", [])
+                saved_model_id = None
                 if models_data:
                     from app.services.session_service import save_model_to_db
                     for m_data in models_data:
-                        save_model_to_db(session_id, m_data)
+                        mid = save_model_to_db(session_id, m_data)
+                        if mid and not saved_model_id:
+                            saved_model_id = mid
 
                 yield _step("interpreting", "Interprétation des résultats…")
                 if intent == "ml":
@@ -182,6 +247,8 @@ Sortie texte du code : {result['output'] or 'Aucune.'}
 Rédige une interprétation concise et claire en 2-4 phrases.
 """
                     response = ask_gemini(prompt=interp_prompt, history=history, model=model)
+                yield {"type": "result", "response": response, "images": images, "model_id": saved_model_id, "model_type": "ml" if saved_model_id else None}
+                return
         else:
             yield _step("thinking", "Réflexion…")
             response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
@@ -211,7 +278,7 @@ async def _run_chat(request: ChatRequest):
     # ── Chemin B : documents ───────────────────────────────────
     if session_type == "document_visual":
         from app.services.colsmolvlm_service import retrieve_visual_pages
-        from app.services.gemini_service import ask_gemini_vision
+        from app.services.vision_service import VisionNonSupportee, ask_vision
 
         yield _step("searching", "Recherche des pages pertinentes du document…")
         pages = retrieve_visual_pages(request.session_id, request.message)
@@ -221,7 +288,15 @@ Question : {request.message}
 Réponds uniquement à partir des pages du document ci-jointes.
 """
         yield _step("reading", "Lecture des pages retrouvées…")
-        response = ask_gemini_vision(prompt, [p["image_bytes"] for p in pages], history=history)
+        try:
+            # Route vers le modèle multimodal du fournisseur choisi. Si celui-ci
+            # n'a pas de vision, on le dit — sans rerouter vers un autre
+            # fournisseur, ce qui enverrait le document ailleurs que prévu.
+            response = ask_vision(prompt, [p["image_bytes"] for p in pages],
+                                  model=request.model, history=history)
+        except VisionNonSupportee as exc:
+            yield {"type": "result", "response": str(exc), "images": [], "sources": sources}
+            return
 
     elif session_type == "document":
         embedded_bytes, embedded_filename, _, _ = get_embedded_table(request.session_id)

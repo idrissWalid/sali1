@@ -88,7 +88,9 @@ export default function ModelsModal({ sessionId, onClose, isOpen = true }: Model
                     </div>
                   </div>
 
-                  {model.metrics && Object.keys(model.metrics).length > 0 && (
+                  {model.type === "timeseries" ? (
+                    <TimeSeriesMetricsSummary metrics={model.metrics} />
+                  ) : model.metrics && Object.keys(model.metrics).length > 0 && (
                     <div className="mb-3">
                       <div className="mb-2 text-xs font-medium text-[var(--text-muted)]">Métriques</div>
                       <div className="grid grid-cols-2 gap-2">
@@ -101,8 +103,8 @@ export default function ModelsModal({ sessionId, onClose, isOpen = true }: Model
                       </div>
                     </div>
                   )}
-                  
-                  {model.features && model.features.length > 0 && (
+
+                  {model.type !== "timeseries" && model.features && model.features.length > 0 && (
                     <div className="mb-4">
                       <div className="mb-2 text-xs font-medium text-[var(--text-muted)]">{"Variables d'entrée ("}{model.features.length}{")"}</div>
                       <div className="flex flex-wrap gap-1">
@@ -120,14 +122,16 @@ export default function ModelsModal({ sessionId, onClose, isOpen = true }: Model
                       onClick={() => handleDashboard(model.id)}
                       className="flex-1 rounded-xl bg-[var(--accent-color)] px-4 py-2.5 text-sm font-medium text-[var(--bg-app)] transition-all hover:brightness-110"
                     >
-                      <LayoutDashboard size={16} strokeWidth={1.8} className="inline-block mr-1.5 align-text-bottom" /> Créer Dashboard
+                      <LayoutDashboard size={16} strokeWidth={1.8} className="inline-block mr-1.5 align-text-bottom" /> {model.type === "timeseries" ? "Voir le dashboard" : "Créer Dashboard"}
                     </button>
-                    <button
-                      onClick={() => handleDownload(model.id)}
-                      className="flex-1 rounded-xl border border-[var(--border-color)] bg-transparent px-4 py-2.5 text-sm font-medium text-[var(--text-main)] transition-colors hover:bg-[var(--bg-panel)]"
-                    >
-                      <Download size={16} strokeWidth={1.8} className="inline-block mr-1.5 align-text-bottom" /> Télécharger (.pkl)
-                    </button>
+                    {model.type !== "timeseries" && (
+                      <button
+                        onClick={() => handleDownload(model.id)}
+                        className="flex-1 rounded-xl border border-[var(--border-color)] bg-transparent px-4 py-2.5 text-sm font-medium text-[var(--text-main)] transition-colors hover:bg-[var(--bg-panel)]"
+                      >
+                        <Download size={16} strokeWidth={1.8} className="inline-block mr-1.5 align-text-bottom" /> Télécharger (.pkl)
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -135,5 +139,46 @@ export default function ModelsModal({ sessionId, onClose, isOpen = true }: Model
           )}
         </div>
     </Modal>
+  );
+}
+
+// Résumé compact d'un modèle de série temporelle dans la liste (statut + gates
+// clés), au lieu du dump brut du rapport imbriqué.
+function TimeSeriesMetricsSummary({ metrics }: { metrics: Record<string, unknown> }) {
+  const r = (metrics || {}) as {
+    statut_final?: string;
+    modele_retenu?: { type?: string; ordre?: number[]; ordre_saisonnier?: number[] | null };
+    gate_2_validation_out_of_sample?: { mape_pct?: number; statut?: string };
+    gate_1_diagnostics_residus?: { statut?: string };
+  };
+  const modele = r.modele_retenu || {};
+  const label = modele.ordre
+    ? `${modele.type ?? "SARIMA"} (${modele.ordre.join(",")})${modele.ordre_saisonnier ? `×(${modele.ordre_saisonnier.join(",")})` : ""}`
+    : (modele.type ?? "TimeCopilot");
+  const mape = r.gate_2_validation_out_of_sample?.mape_pct;
+  const badge = (s?: string) =>
+    s === "PASS" ? "text-green-500" : s === "FAIL" ? "text-red-500" : "text-[var(--text-muted)]";
+  return (
+    <div className="mb-3 grid grid-cols-2 gap-2 text-xs">
+      <div className="rounded-lg border border-[var(--border-muted)] bg-[var(--bg-panel)] p-2">
+        <div className="text-[var(--text-muted)]">Modèle</div>
+        <div className="font-mono text-[var(--text-main)]">{label}</div>
+      </div>
+      <div className="rounded-lg border border-[var(--border-muted)] bg-[var(--bg-panel)] p-2">
+        <div className="text-[var(--text-muted)]">Statut</div>
+        <div className="font-medium text-[var(--text-main)]">{r.statut_final ?? "—"}</div>
+      </div>
+      <div className="rounded-lg border border-[var(--border-muted)] bg-[var(--bg-panel)] p-2">
+        <div className="text-[var(--text-muted)]">MAPE</div>
+        <div className="font-mono text-[var(--text-main)]">{typeof mape === "number" ? `${mape.toFixed(2)}%` : "—"}</div>
+      </div>
+      <div className="rounded-lg border border-[var(--border-muted)] bg-[var(--bg-panel)] p-2">
+        <div className="text-[var(--text-muted)]">Gates</div>
+        <div className="font-medium">
+          <span className={badge(r.gate_1_diagnostics_residus?.statut)}>G1</span>{" · "}
+          <span className={badge(r.gate_2_validation_out_of_sample?.statut)}>G2</span>
+        </div>
+      </div>
+    </div>
   );
 }

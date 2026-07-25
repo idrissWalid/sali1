@@ -41,6 +41,9 @@ interface Props {
   selectedModel?: string;
   onUploadClick?: () => void;
   onAssistantMessage?: (text: string) => void;
+  // Signale au parent qu'un modèle est en cours de génération dans le chat
+  // ("start") puis qu'il est terminé ("done", avec l'id si un modèle a été créé).
+  onModelActivity?: (activity: { status: "start" } | { status: "done"; modelId?: string | null }) => void;
 }
 
 // Helper pour parser le gras et le code inline
@@ -100,7 +103,7 @@ function renderInlineMarkdown(text: string, sources?: SourceRef[], onSourceClick
           padding: "2px 6px",
           borderRadius: "4px",
           fontSize: "12px",
-          fontFamily: "'Roboto Mono', monospace",
+          fontFamily: "var(--font-roboto-mono), monospace",
         }}>
           {part.slice(1, -1)}
         </code>
@@ -366,7 +369,7 @@ function renderMarkdown(
 }
 // ─────────────────────────────────────────────────────────────
 
-export default function ChatPanel({ sessionId, sourceCount, initialMessage, selectedModel, onUploadClick, onAssistantMessage }: Props) {
+export default function ChatPanel({ sessionId, sourceCount, initialMessage, selectedModel, onUploadClick, onAssistantMessage, onModelActivity }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const latestInput = useRef("");
@@ -378,6 +381,8 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
   // Étape en cours annoncée par le backend, affichée à la place des trois points.
   const [activeStep, setActiveStep] = useState<{ phase: string; message: string } | null>(null);
   const [typingDone, setTypingDone] = useState<Set<number>>(new Set());
+  // Titre de la session, généré à l'import d'après le contenu du fichier.
+  const [sessionTitle, setSessionTitle] = useState<string>("");
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [selectedSource, setSelectedSource] = useState<{ page: number; text: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -477,6 +482,9 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
   const [prevSessionId, setPrevSessionId] = useState<string | null>(sessionId);
   if (sessionId !== prevSessionId) {
     setPrevSessionId(sessionId);
+    // Le titre appartient à la session quittée : le vider tout de suite évite
+    // qu'il coiffe brièvement le contenu de la suivante.
+    setSessionTitle("");
     if (!sessionId) {
       setMessages([]);
       setTypingDone(new Set());
@@ -499,6 +507,11 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         const res = await fetch(`${apiUrl}/api/sessions/${sessionId}`);
         if (!res.ok) throw new Error("Erreur serveur");
         const data = await res.json();
+
+        // « Nouvelle session » est le libellé par défaut en base : ne pas le
+        // hisser en gros titre au-dessus du résumé.
+        const titre = (data?.title || "").trim();
+        setSessionTitle(titre === "Nouvelle session" ? "" : titre);
 
         if (data && data.messages?.length) {
           setMessages(data.messages);
@@ -526,6 +539,9 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     setLoading(true);
     const controller = new AbortController();
     abortControllerRef.current = controller;
+    // Suivi de l'activité "génération de modèle" pour signaler le parent.
+    let modelActivityStarted = false;
+    let resultModelId: string | null = null;
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
       const selected = selectedModel?.trim();
@@ -549,7 +565,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let data: { response?: string; images?: string[]; sources?: unknown[] } | null = null;
+      let data: { response?: string; images?: string[]; sources?: unknown[]; model_id?: string | null } | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -564,6 +580,11 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           const event = JSON.parse(line);
           if (event.type === "step") {
             setActiveStep({ phase: event.phase, message: event.message });
+            // Un modèle commence à être généré → prévenir le parent (placeholder animé).
+            if (event.phase === "model_generating" && !modelActivityStarted) {
+              modelActivityStarted = true;
+              onModelActivity?.({ status: "start" });
+            }
           } else if (event.type === "result") {
             data = event;
           } else if (event.type === "error") {
@@ -574,6 +595,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
 
       if (!data) throw new Error("Aucune réponse reçue du serveur.");
       const textResponse = data.response ?? "";
+      resultModelId = data.model_id ?? null;
       setMessages(m => [...m, {
         role: "assistant",
         text: textResponse,
@@ -581,8 +603,11 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         sources: (data.sources as Message["sources"]) || [],
       }]);
       onAssistantMessage?.(textResponse);
-    } catch (err: any) {
-      if (err && err.name === 'AbortError') {
+    } catch (err: unknown) {
+      // `unknown` plutôt que `any` : l'abort volontaire (bouton « interrompre »)
+      // doit être distingué d'une vraie panne réseau, et le compilateur vérifie
+      // désormais ce rétrécissement de type.
+      if (err instanceof Error && err.name === "AbortError") {
         setMessages(m => [...m, { role: "assistant", text: "Réponse interrompue." }]);
       } else {
         setMessages(m => [...m, { role: "assistant", text: "Erreur de connexion au serveur." }]);
@@ -591,6 +616,11 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       setLoading(false);
       setActiveStep(null);
       abortControllerRef.current = null;
+      // Fin de génération de modèle : le parent arrête l'animation et rafraîchit
+      // la liste des modèles (le nouveau devient cliquable s'il a été créé).
+      if (modelActivityStarted) {
+        onModelActivity?.({ status: "done", modelId: resultModelId });
+      }
     }
   };
 
@@ -633,7 +663,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         flexShrink: 0,
         position: "relative",
       }}>
-        <span style={{ fontFamily: "'Google Sans',sans-serif", fontSize: "16px", fontWeight: 500, color: "var(--text-main)" }}>
+        <span style={{ fontFamily: "var(--font-google-sans), sans-serif", fontSize: "16px", fontWeight: 500, color: "var(--text-main)" }}>
           Discussion
         </span>
 
@@ -719,6 +749,22 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
             <div className="chat-empty-message">
               Votre source est prête. Posez votre première question.
             </div>
+          )}
+
+          {sessionTitle && messages.length > 0 && (
+            <h1
+              style={{
+                fontSize: "28px",
+                fontWeight: 700,
+                lineHeight: 1.25,
+                letterSpacing: "-0.02em",
+                color: "var(--text-main)",
+                margin: "4px 0 24px",
+                animation: "msgFadeIn 0.25s ease-out both",
+              }}
+            >
+              {sessionTitle}
+            </h1>
           )}
 
           {messages.map((msg, i) => (

@@ -91,7 +91,8 @@ Ne commence JAMAIS tes réponses par des formules d'introduction ou des salutati
 
 À CHAQUE RÉPONSE, tu DOIS toujours formuler 1 à 3 suggestions d'analyses complémentaires pertinentes que l'utilisateur pourrait te demander de faire sur le jeu de données pour approfondir le sujet."""
 
-def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: str = "gemini-3.1-flash-lite-preview") -> str:
+def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: str | None = None) -> str:
+    model = model or config.get_default_model()
     try:
         full_prompt = SYSTEM_PROMPT
         if data_context:
@@ -115,10 +116,13 @@ def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: s
         return f"Erreur Gemini : {str(e)}"
 
 
-def ask_gemini_vision(prompt: str, images: list, history: list = []) -> str:
+def ask_gemini_vision(prompt: str, images: list, history: list = [], model: str | None = None) -> str:
     """Répond à une question en s'appuyant directement sur des images (ex: pages de
     document scanné retrouvées par ColSmolVLM) — pas de texte OCR intermédiaire.
-    Nécessite un modèle Gemini (seul fournisseur multimodal câblé dans ce projet)."""
+
+    Ne pas appeler directement : passer par `vision_service.ask_vision`, qui route
+    vers le fournisseur choisi par l'utilisateur. Cette fonction n'est que le bras
+    Gemini de ce routage."""
     try:
         full_prompt = SYSTEM_PROMPT + f"\n\nQuestion : {prompt}"
         gemini_history = _build_gemini_history(history)
@@ -127,7 +131,7 @@ def ask_gemini_vision(prompt: str, images: list, history: list = []) -> str:
         parts.append(types.Part.from_text(text=full_prompt))
 
         client = get_gemini_client()
-        chat = client.chats.create(model="gemini-3.1-flash-lite-preview", history=gemini_history)
+        chat = client.chats.create(model=model or config.get_default_model(), history=gemini_history)
         response = chat.send_message(parts)
         return response.text
     except Exception as e:
@@ -135,11 +139,12 @@ def ask_gemini_vision(prompt: str, images: list, history: list = []) -> str:
         return f"Erreur Gemini (vision) : {str(e)}"
 
 
-def generate_visualization_code(question: str, data_context: str, history: list = [], model: str = "gemini-3.1-flash-lite-preview") -> str:
+def generate_visualization_code(question: str, data_context: str, history: list = [], model: str | None = None) -> str:
     """
     Demande à Gemini de générer uniquement du code Python
     pour répondre à une question de visualisation.
     """
+    model = model or config.get_default_model()
     prompt = f"""
 Tu es un expert en analyse de données Python.
 

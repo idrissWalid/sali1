@@ -5,6 +5,7 @@ import math
 import re
 from app.services.gemini_service import ask_gemini
 from app.services.profiling_service import generate_profiling_stats
+from app.core import config
 
 # ── Choix des graphiques du dashboard ────────────────────────────────────────
 # Le type de graphique est déduit des propriétés mesurées de chaque colonne
@@ -320,10 +321,11 @@ Propose 3 analyses concrètes et spécifiques que tu peux réaliser sur ces donn
 """
 
 
-async def analyze_tabular(file_bytes: bytes, filename: str, model: str = "gemini-3.1-flash-lite-preview") -> dict:
+async def analyze_tabular(file_bytes: bytes, filename: str, model: str | None = None) -> dict:
     from app.services.ingestion_service import load_tabular
     import pandas as pd
 
+    model = model or config.get_default_model()
     result = load_tabular(file_bytes, filename)
     if result["status"] == "error":
         return result
@@ -348,6 +350,76 @@ async def analyze_tabular(file_bytes: bytes, filename: str, model: str = "gemini
         "stats": stats,
         "interpretation": interpretation
     }
+
+# Cache des interprétations générées, clé = (session_id, dataset_id, variable).
+# Évite de rappeler le LLM à chaque fois qu'on revient sur une même variable.
+_variable_interpretation_cache: dict[tuple[str, str, str], str] = {}
+
+
+def _build_variable_interpretation_prompt(var_name: str, var_stats: dict, overview: dict) -> str:
+    """Construit le prompt d'interprétation d'UNE variable pour le dashboard."""
+    n_rows = overview.get("n_lignes") or overview.get("n_rows") or "?"
+    return f"""Tu es un analyste de données. Rédige une interprétation claire et accessible, en français, de la distribution de la variable ci-dessous. Cette interprétation accompagne le graphique de la variable dans un tableau de bord.
+
+Variable analysée : « {var_name} »
+Nombre total de lignes du jeu de données : {n_rows}
+
+Statistiques disponibles pour cette variable :
+{json.dumps(var_stats, ensure_ascii=False, indent=2)}
+
+Consignes STRICTES :
+- 2 à 4 phrases courtes maximum. Va droit au but, AUCUNE formule d'introduction ("Voici", "Cette variable...", "En tant que...").
+- Mets en avant ce qui est réellement notable selon le type : tendance centrale et dispersion, asymétrie (skewness), valeurs extrêmes, catégorie dominante et déséquilibre, valeurs manquantes.
+- Si une valeur manquante est élevée (>10%) ou un déséquilibre marqué existe, signale-le.
+- Termine par une courte implication analytique concrète si pertinent (ex: "à normaliser avant modélisation", "catégorie sur-représentée à surveiller").
+- N'invente aucun chiffre : appuie-toi uniquement sur les statistiques fournies.
+"""
+
+
+async def interpret_variable(
+    session_id: str,
+    variable: str,
+    dataset_id: str | None = None,
+    model: str | None = None,
+) -> dict:
+    """Génère (ou renvoie depuis le cache) une interprétation textuelle d'une
+    variable pour le dashboard. Le résultat change donc avec la variable
+    sélectionnée côté frontend."""
+    from app.services.session_service import get_dataset, list_datasets
+    from app.services.gemini_service import complete_text
+
+    model = model or config.get_default_model()
+
+    available = list_datasets(session_id)
+    if not available:
+        return {"error": "Session ou jeu de données introuvable."}
+
+    known_ids = {item["id"] for item in available}
+    if dataset_id not in known_ids:
+        dataset_id = available[0]["id"]
+
+    cache_key = (session_id, dataset_id, variable)
+    if cache_key in _variable_interpretation_cache:
+        return {"variable": variable, "interpretation": _variable_interpretation_cache[cache_key], "cached": True}
+
+    _, _, _, stats = get_dataset(session_id, dataset_id)
+    stats = stats or {}
+    variables = stats.get("variables", {})
+    overview = stats.get("dataset_overview", {})
+
+    var_stats = variables.get(variable)
+    if var_stats is None:
+        return {"error": f"Variable « {variable} » introuvable dans ce jeu de données."}
+
+    prompt = _build_variable_interpretation_prompt(variable, var_stats, overview)
+    try:
+        interpretation = complete_text(prompt, model).strip()
+    except Exception as exc:
+        return {"error": f"Impossible de générer l'interprétation : {exc}"}
+
+    _variable_interpretation_cache[cache_key] = interpretation
+    return {"variable": variable, "interpretation": interpretation, "cached": False}
+
 
 async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> dict:
     import pandas as pd

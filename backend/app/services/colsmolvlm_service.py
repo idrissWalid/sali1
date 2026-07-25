@@ -22,6 +22,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 _model = None
 _processor = None
+# bfloat16 divise par ~2 l'empreinte mémoire du modèle de base (~8,6 Go en
+# float32) par rapport au calcul en pleine précision, sans les problèmes de
+# dépassement numérique de float16 sur CPU. Nécessaire pour tenir sur des
+# machines/conteneurs à RAM limitée (ex: limite Docker de 4G en prod).
+_DTYPE = torch.bfloat16
 
 
 def _get_model():
@@ -30,7 +35,7 @@ def _get_model():
         from colpali_engine.models import ColIdefics3, ColIdefics3Processor
         _model = ColIdefics3.from_pretrained(
             MODEL_NAME,
-            torch_dtype=torch.float32,
+            torch_dtype=_DTYPE,
             device_map="cpu",
         ).eval()
         _processor = ColIdefics3Processor.from_pretrained(MODEL_NAME)

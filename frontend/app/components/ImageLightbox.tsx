@@ -132,7 +132,12 @@ export default function ImageLightbox({ src, onClose }: Props) {
         >RÉINITIALISER</button>
       </div>
 
-      {/* Image */}
+      {/* Image — volontairement un <img> natif et non next/image : la source est
+          une data URI base64 (graphique produit par le sandbox), que next/image
+          ne peut pas optimiser ; et la visionneuse applique ses propres
+          transformations de zoom/déplacement, incompatibles avec le conteneur
+          dimensionné qu'impose next/image. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={src}
         alt="En grand"

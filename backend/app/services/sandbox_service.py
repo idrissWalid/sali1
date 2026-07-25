@@ -12,14 +12,22 @@ Le code est exécuté dans un container Docker éphémère et isolé :
 
 import base64
 import json
+import math
+import os
 import subprocess
 import sys
 from pydantic import ValidationError
-from app.services.model_specs import ModelSpec
+from app.core.json_utils import json_safe
+from app.services.model_specs import ModelFamily, ModelSpec
 
 # Nom de l'image Docker sandbox (construite avec sandbox/Dockerfile)
 SANDBOX_IMAGE = "no-code-sandbox:latest"
-SANDBOX_TIMEOUT = 120  # secondes pour laisser AutoML s'exécuter
+SANDBOX_TIMEOUT = int(os.getenv("SANDBOX_TIMEOUT", "180"))  # s — laisse le grid search SARIMA s'exécuter
+# Limites ressources (surchargeables par variables d'env). 256m était trop juste
+# pour statsmodels/SARIMA (OOM-kill, exit 137) ; 1g laisse tourner un grid search.
+SANDBOX_MEMORY = os.getenv("SANDBOX_MEMORY", "1g")
+SANDBOX_CPUS = os.getenv("SANDBOX_CPUS", "1.0")
+SANDBOX_TMPFS_SIZE = os.getenv("SANDBOX_TMPFS_SIZE", "128m")
 
 
 def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None) -> dict:
@@ -54,12 +62,21 @@ def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None)
         "docker", "run",
         "--rm",                   # supprimer après exécution
         "-i",                     # mode interactif (stdin)
-        "--network=none",         # pas d'accès réseau
-        "--memory=256m",          # limite RAM
-        "--memory-swap=256m",     # pas de swap
-        "--cpus=0.5",             # limite CPU
-        "--read-only",            # FS en lecture seule
-        "--tmpfs", "/tmp:rw,size=64m,noexec",  # /tmp en RAM pour les graphiques
+        "--network=none",                       # pas d'accès réseau
+        f"--memory={SANDBOX_MEMORY}",           # limite RAM
+        f"--memory-swap={SANDBOX_MEMORY}",      # pas de swap au-delà de la RAM
+        f"--cpus={SANDBOX_CPUS}",               # limite CPU
+        "--read-only",                          # FS en lecture seule
+        "--tmpfs", f"/tmp:rw,size={SANDBOX_TMPFS_SIZE},noexec",  # /tmp en RAM
+        # Sous cgroup --cpus, numpy/scipy/statsmodels (OpenBLAS/OMP) peuvent quand
+        # même tenter de paralléliser sur tous les cœurs de l'hôte et sur-allouer
+        # des buffers par thread → dépassement mémoire (OOM, exit 137) même avec
+        # une limite RAM confortable. On borne explicitement à 1 thread.
+        "-e", "OMP_NUM_THREADS=1",
+        "-e", "OPENBLAS_NUM_THREADS=1",
+        "-e", "MKL_NUM_THREADS=1",
+        "-e", "NUMEXPR_NUM_THREADS=1",
+        "-e", "VECLIB_MAXIMUM_THREADS=1",
         SANDBOX_IMAGE,
     ]
 
@@ -110,7 +127,10 @@ def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None)
         }
 
     try:
-        result = json.loads(stdout)
+        # `json.loads` relit sans erreur les NaN/Infinity que le runner a pu
+        # émettre (metrics.json issu de pandas). On les neutralise ici, sinon ils
+        # se propagent jusqu'en base et cassent la lecture du modèle plus tard.
+        result = json_safe(json.loads(stdout))
     except json.JSONDecodeError:
         return {
             "output": stdout,
@@ -235,6 +255,46 @@ def _fallback_local_exec(code: str, dataframe_bytes: bytes, filename: str) -> di
 
     return {"output": stdout_cap.getvalue(), "images": images, "metrics": metrics, "models": locals().get("models", []), "error": error}
 
+def _incoherence_echelle_prevision(metrics: dict) -> str | None:
+    """Détecte une prévision restée sur une échelle transformée.
+
+    Le prompt impose l'échelle d'origine pour `historique` ET `prevision`, mais
+    l'oubli de la transformation inverse (log jamais ré-exponentié) franchit la
+    validation de schéma : les types sont corrects, seuls les ordres de grandeur
+    sont incohérents. Le dashboard affiche alors une prévision à ~1 sous un
+    historique à ~432.
+
+    Renvoie le motif du rejet, ou None si les échelles sont plausibles.
+    """
+    import statistics
+
+    hist = [h.get("valeur") for h in (metrics.get("historique") or [])]
+    hist = [abs(v) for v in hist if isinstance(v, (int, float)) and math.isfinite(v)]
+    prev = [p.get("valeur_prevue") for p in (metrics.get("prevision") or [])]
+    prev = [abs(v) for v in prev if isinstance(v, (int, float)) and math.isfinite(v)]
+    if len(hist) < 3 or not prev:
+        return None
+
+    # Médianes : insensibles aux quelques points extrêmes d'une série réelle.
+    ref = statistics.median(hist[-min(len(hist), 24):])
+    cible = statistics.median(prev)
+    if ref <= 0 or cible <= 0:
+        return None
+
+    ratio = cible / ref
+    # Seuil large (facteur 10) : une série peut légitimement croître fort, mais
+    # pas d'un ordre de grandeur sur un horizon de prévision court.
+    if 0.1 <= ratio <= 10:
+        return None
+    return (
+        f"Échelle incohérente : la prévision médiane ({cible:.4g}) et la fin de "
+        f"l'historique ({ref:.4g}) diffèrent d'un facteur {ratio:.3g}. La "
+        f"transformation inverse a probablement été oubliée — si log(y) a été "
+        f"appliqué, 'prevision' (valeur_prevue, ic_bas, ic_haut) doit être "
+        f"ré-exponentiée pour revenir à l'échelle d'origine, comme 'historique'."
+    )
+
+
 def validate_output(result: dict, spec: ModelSpec) -> dict:
     """
     Valide les metrics.json générés par rapport au ModelSpec.
@@ -267,5 +327,16 @@ def validate_output(result: dict, spec: ModelSpec) -> dict:
             "technical": f"Validation Error:\\n{err_msg}",
             "simple": "Le modèle a omis certaines statistiques obligatoires."
         }
+        return result
+
+    # Le schéma est respecté, mais des valeurs valides peuvent rester absurdes :
+    # on relance l'autocorrection plutôt que de livrer une prévision inexploitable.
+    if spec.family == ModelFamily.TIME_SERIES:
+        motif = _incoherence_echelle_prevision(metrics)
+        if motif:
+            result["error"] = {
+                "technical": motif,
+                "simple": "La prévision produite n'est pas à la même échelle que l'historique.",
+            }
 
     return result

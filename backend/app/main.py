@@ -8,6 +8,7 @@ from app.api.session import router as session_router
 from app.api.audio import router as audio_router
 from app.api.settings import router as settings_router
 from app.core.database import init_db
+from app.core.json_utils import SafeJSONResponse
 
 # Initialisation de la base de données SQLite
 init_db()
@@ -15,7 +16,10 @@ init_db()
 app = FastAPI(
     title="No-Code Data Intelligence",
     description="Agent IA d'analyse de données pour institutions africaines",
-    version="0.1.0"
+    version="0.1.0",
+    # Les payloads issus de pandas/statsmodels peuvent contenir des NaN/Inf, que
+    # le JSON standard n'admet pas. Sans ça la réponse échoue en ValueError.
+    default_response_class=SafeJSONResponse,
 )
 
 app.add_middleware(
@@ -56,6 +60,24 @@ async def get_dashboard_data_endpoint(session_id: str, dataset_id: str | None = 
     if "error" in data:
         raise HTTPException(status_code=404, detail=data["error"])
     return data
+
+
+@app.get("/api/dashboard/interpret/{session_id}")
+async def interpret_dashboard_variable(
+    session_id: str,
+    variable: str,
+    dataset_id: str | None = None,
+    model: str | None = None,
+):
+    """Interprétation en langage naturel d'une variable, affichée à côté de son
+    graphique dans le dashboard. Change avec la variable sélectionnée."""
+    from app.services.analysis_service import interpret_variable
+    from fastapi import HTTPException
+
+    result = await interpret_variable(session_id, variable, dataset_id=dataset_id, model=model)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @app.get("/api/sessions/{session_id}/datasets")

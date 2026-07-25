@@ -94,7 +94,7 @@ export default function Sidebar({
       {!hideHeader ? (
         <div style={{
           padding: "16px 20px 14px",
-          fontFamily: "'Google Sans',sans-serif",
+          fontFamily: "var(--font-google-sans), sans-serif",
           fontSize: "16px",
           fontWeight: 500,
           color: "var(--text-main)",

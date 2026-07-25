@@ -1,0 +1,20 @@
+# Dépendances du venv DÉDIÉ à TimeCopilot — à ne jamais installer dans le venv
+# principal (backend/requirements.txt).
+#
+# Pourquoi un venv séparé : les contraintes de timecopilot sont incompatibles
+# avec deux paquets du backend, sans version commune possible :
+#   - timecopilot   exige transformers<5   ↔ colpali-engine exige transformers>=5.3
+#   - timecopilot   exige openai>=1.99.7   ↔ pandasai 0.4.0 exige openai<0.28
+# Installer timecopilot dans le venv principal rétrograde transformers en 4.x et
+# casse l'indexation visuelle des documents scannés (ColSmolVLM).
+#
+# Installation (Python 3.11 — 3.12 n'a pas ensurepip sur cette machine) :
+#   cd backend
+#   python3.11 -m venv .venv-timecopilot
+#   ./.venv-timecopilot/bin/pip install -r requirements-timecopilot.txt
+#
+# Le backend n'importe jamais ce venv : il l'appelle en sous-processus via
+# app/services/timecopilot_runner.py, ce qui garantit l'étanchéité des deux
+# arbres de dépendances.
+
+timecopilot
