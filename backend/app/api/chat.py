@@ -235,13 +235,6 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
             else:
                 images = result["images"]
                 models_data = result.get("models", [])
-                saved_model_id = None
-                if models_data:
-                    from app.services.session_service import save_model_to_db
-                    for m_data in models_data:
-                        mid = save_model_to_db(session_id, m_data)
-                        if mid and not saved_model_id:
-                            saved_model_id = mid
 
                 yield _step("interpreting", "Interprétation des résultats…")
                 if intent == "ml":
@@ -259,6 +252,20 @@ Sortie texte du code : {result['output'] or 'Aucune.'}
 Rédige une interprétation concise et claire en 2-4 phrases.
 """
                     response = await to_thread(ask_gemini, prompt=interp_prompt, history=history, model=model)
+
+                # Générée avant la persistance pour être stockée avec le modèle :
+                # sans ça elle ne vivait que dans la réponse du chat et disparaissait
+                # dès que l'utilisateur rouvrait le modèle depuis son dashboard.
+                saved_model_id = None
+                if models_data:
+                    from app.services.session_service import save_model_to_db
+                    for m_data in models_data:
+                        if intent == "ml":
+                            m_data.setdefault("metadata", {}).setdefault("metrics", {})["interpretation"] = response
+                        mid = save_model_to_db(session_id, m_data)
+                        if mid and not saved_model_id:
+                            saved_model_id = mid
+
                 yield {"type": "result", "response": response, "images": images, "model_id": saved_model_id, "model_type": "ml" if saved_model_id else None}
                 return
         else:

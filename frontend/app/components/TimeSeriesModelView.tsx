@@ -16,6 +16,7 @@ interface HistoPoint { date: string; valeur: number | null }
 interface ForecastPoint { date: string; valeur_prevue: number; ic_bas?: number; ic_haut?: number }
 
 export interface TimeSeriesReport {
+  interpretation?: string;
   serie?: { n_observations?: number; frequence?: string; saisonnalite_detectee?: number | null };
   transformation?: { log_applique?: boolean; justification?: string };
   stationnarite?: { d?: number; D?: number; adf_p_value_finale?: number; kpss_p_value_finale?: number };
@@ -391,6 +392,16 @@ export default function TimeSeriesModelView({ model, onBack }: { model: ModelInf
             delay={180}
           />
         </div>
+
+        {/* Interprétation en langage naturel, générée par le LLM à partir du
+            rapport — lue avant les détails statistiques. Absente pour
+            TimeCopilot, dont les propres analyses jouent déjà ce rôle
+            (TimeCopilotPanel, plus bas). */}
+        {r.interpretation && (
+          <Card title="Interprétation" delay={210}>
+            <Prose texte={r.interpretation} />
+          </Card>
+        )}
 
         {/* Forecast chart */}
         <div className="ts-card rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] p-6 shadow-sm" style={{ animationDelay: "220ms" }}>

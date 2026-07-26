@@ -49,6 +49,7 @@ interface Artefact {
 }
 
 export interface SupervisedReport {
+  interpretation?: string;
   famille?: string;
   cible?: string;
   variables?: string[];
@@ -128,6 +129,10 @@ function Card({ title, extra, children, delay }: { title: React.ReactNode; extra
       {children}
     </div>
   );
+}
+
+function Prose({ texte }: { texte: string }) {
+  return <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-300">{texte}</p>;
 }
 
 function Row({ k, v, accent }: { k: string; v: React.ReactNode; accent?: string }) {
@@ -529,6 +534,14 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
 
         {onglet === "rapport" ? (
           <>
+        {/* Interprétation en langage naturel, générée par le LLM à partir du
+            rapport — lue avant les détails statistiques. */}
+        {r.interpretation && (
+          <Card title="Interprétation" delay={200}>
+            <Prose texte={r.interpretation} />
+          </Card>
+        )}
+
         {/* Verdict : ce qui a bloqué, ou pourquoi c'est bon */}
         {(r.violations?.length ?? 0) > 0 && (
           <div className="sv-card rounded-2xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 p-6" style={{ animationDelay: "220ms" }}>

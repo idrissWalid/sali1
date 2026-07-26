@@ -17,6 +17,13 @@ interface ModelInfo {
   created_at: string;
 }
 
+// Rétro-compatibilité : les modèles entraînés avant l'ajout de ce champ n'ont
+// pas d'interprétation persistée, `metrics.interpretation` est alors absent.
+function interpretationDe(metrics: Record<string, unknown>): string | null {
+  const v = metrics?.interpretation;
+  return typeof v === "string" && v.trim() ? v : null;
+}
+
 export default function ModelDashboard() {
   const { modelId } = useParams<{ modelId: string }>();
   const [model, setModel] = useState<ModelInfo | null>(null);
@@ -148,8 +155,6 @@ export default function ModelDashboard() {
   // Repli générique (clustering, analyse factorielle, anciens modèles) : mêmes
   // couleurs, rayons et ombres que le dashboard de données, pour que l'ensemble
   // des vues de modèles forme un système visuel cohérent.
-  const champ = "w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#222] px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 transition-colors";
-
   return (
     <div className="dashboard-shell min-h-screen w-full bg-gray-50 dark:bg-[#111] text-gray-900 dark:text-gray-100 font-sans">
       <div className="dashboard-container">
@@ -186,6 +191,15 @@ export default function ModelDashboard() {
           <StatCard title="Statut" value="Actif" icon={Crosshair} />
         </div>
 
+        {/* Interprétation en langage naturel, générée par le LLM à partir des
+            métriques — lue avant les détails statistiques. */}
+        {interpretationDe(model.metrics) && (
+          <div className="dashboard-panel bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm">
+            <h2 className="text-xl font-bold mb-4 border-b border-gray-100 dark:border-gray-800 pb-3">Interprétation</h2>
+            <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-300">{interpretationDe(model.metrics)}</p>
+          </div>
+        )}
+
         <div className="dashboard-main-grid grid grid-cols-1 lg:grid-cols-3">
           {/* Left Column: Details & Performance */}
           <div className="lg:col-span-1 flex flex-col gap-6">
@@ -207,11 +221,11 @@ export default function ModelDashboard() {
               </div>
             </div>
 
-            {model.metrics && Object.keys(model.metrics).length > 0 && (
+            {model.metrics && Object.keys(model.metrics).filter(k => k !== "interpretation").length > 0 && (
               <div className="dashboard-panel bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm">
                 <h2 className="text-xl font-bold mb-4 border-b border-gray-100 dark:border-gray-800 pb-3">Performances</h2>
                 <div className="flex flex-col gap-2">
-                  {Object.entries(model.metrics).map(([k, v]) => (
+                  {Object.entries(model.metrics).filter(([k]) => k !== "interpretation").map(([k, v]) => (
                     <div
                       key={k}
                       className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 dark:bg-[#222] px-3.5 py-2.5 text-sm"

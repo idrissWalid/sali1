@@ -95,8 +95,10 @@ def run_rigorous_timeseries(
     forecast_chart = images[0] if images else None
 
     name = _model_name_from_report(report, "Modèle série temporelle")
-    model_id = save_timeseries_model_to_db(session_id, name, report, forecast_chart, engine="sarima")
 
+    # Générée avant la persistance pour être stockée dans le rapport : sans ça
+    # elle ne vivait que dans la réponse du chat et disparaissait dès que
+    # l'utilisateur rouvrait le modèle depuis son dashboard.
     interpretation = generate_ml_interpretation(
         question,
         _report_summary_for_llm(report),
@@ -105,6 +107,9 @@ def run_rigorous_timeseries(
         history,
         model,
     )
+    report["interpretation"] = interpretation
+    model_id = save_timeseries_model_to_db(session_id, name, report, forecast_chart, engine="sarima")
+
     statut = report.get("statut_final", "")
     response = (
         f"{interpretation}\n\n"
@@ -201,14 +206,16 @@ def run_autoforecast_timeseries(
     forecast_chart = images[0] if images else None
 
     name = _model_name_from_report(report, "Prévision automatique")
-    model_id = save_timeseries_model_to_db(
-        session_id, name, report, forecast_chart, engine="autoforecast"
-    )
 
     interpretation = generate_ml_interpretation(
         question, _report_summary_for_llm(report), data_context,
         bool(images), history, model,
     )
+    report["interpretation"] = interpretation
+    model_id = save_timeseries_model_to_db(
+        session_id, name, report, forecast_chart, engine="autoforecast"
+    )
+
     statut = report.get("statut_final", "")
     response = (
         f"{interpretation}\n\n"

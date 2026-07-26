@@ -165,16 +165,21 @@ def run_supervised_tournament(
 
     rapport["_engine"] = "tournoi_supervise"
     nom = _nom_modele(rapport)
+
+    # Générée avant la persistance pour être stockée dans le rapport : sans ça
+    # elle ne vivait que dans la réponse du chat et disparaissait dès que
+    # l'utilisateur rouvrait le modèle depuis son dashboard.
+    interpretation = generate_ml_interpretation(
+        question, _resume_pour_llm(rapport), data_context,
+        bool(result.get("images")), history, model,
+    )
+    rapport["interpretation"] = interpretation
+
     # Le runner du sandbox remonte les .pkl produits : c'est le pipeline
     # déployable, celui qui sert à la simulation et à l'export.
     artefacts = result.get("models") or []
     model_b64 = artefacts[0].get("model_b64") if artefacts else None
     model_id = save_supervised_model_to_db(session_id, nom, rapport, model_b64=model_b64)
-
-    interpretation = generate_ml_interpretation(
-        question, _resume_pour_llm(rapport), data_context,
-        bool(result.get("images")), history, model,
-    )
 
     statut = rapport.get("statut_final")
     qualite = rapport.get("qualite")
