@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { toggleTheme, useTheme } from "@/hooks/use-theme";
+import { API_URL } from "@/lib/api";
 import {
   ArrowLeft, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Sun, Moon,
   Target, Gauge, Trophy, Timer, ListChecks, FlaskConical, BarChart3, Download, Loader2,
@@ -306,7 +307,7 @@ function Simulation({ modelId, artefact, estRegression, cible, delay }: {
     setErreur("");
     setResultat(null);
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       // Les numériques doivent partir en nombre : une chaîne ferait échouer le
       // StandardScaler du pipeline.
       const features: Record<string, string | number> = {};
@@ -423,7 +424,7 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
   const artefact = r.artefact ?? {};
   const [onglet, setOnglet] = useState<"rapport" | "simulation">("rapport");
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+  const apiUrl = API_URL;
 
   return (
     <div className="dashboard-shell min-h-screen w-full bg-gray-50 dark:bg-[#111] text-gray-900 dark:text-gray-100 font-sans">

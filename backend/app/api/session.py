@@ -2,9 +2,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Any
 import json
-import os
 from app.core.database import get_db_connection
-from app.services.session_service import get_session, rename_session
+from app.services.session_service import get_session, rename_session, delete_session_cascade
 from app.services.rag_service import chroma_client
 
 router = APIRouter()
@@ -102,36 +101,23 @@ async def rename_session_endpoint(session_id: str, request: SessionRenameRequest
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Récupérer les informations pour nettoyer les fichiers et ChromaDB
-    cursor.execute("SELECT type, file_path FROM sessions WHERE id = ?", (session_id,))
-    row = cursor.fetchone()
-    
-    if not row:
-        conn.close()
+    # Supprime la session, ses messages, ses datasets/modèles secondaires (via
+    # cascade SQL) et les fichiers physiques associés.
+    result = delete_session_cascade(session_id)
+    if result is None:
         raise HTTPException(status_code=404, detail="Session introuvable.")
-        
-    # Supprimer les messages et la session de SQLite
-    cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-    cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
-    conn.commit()
-    conn.close()
-    
-    # Supprimer le fichier physique
-    file_path = row["file_path"]
-    if file_path and os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            print(f"Erreur de suppression du fichier {file_path}: {e}")
-            
-    # Supprimer la collection ChromaDB si c'est un document
-    if row["type"] == "document":
+
+    # Stockage spécifique au type de session, non couvert par delete_session_cascade.
+    if result["type"] == "document":
         try:
             chroma_client.delete_collection(name=f"session_{session_id}")
         except Exception as e:
             print(f"Erreur de suppression de la collection ChromaDB session_{session_id}: {e}")
-            
+    elif result["type"] == "document_visual":
+        from app.services.colsmolvlm_service import delete_visual_session
+        try:
+            delete_visual_session(session_id)
+        except Exception as e:
+            print(f"Erreur de suppression des données visuelles de la session {session_id}: {e}")
+
     return {"status": "ok", "message": "Session supprimée avec succès."}

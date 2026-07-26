@@ -4,6 +4,13 @@ from pydantic import BaseModel
 from typing import List, Optional
 import asyncio
 import json
+
+def to_thread(func, /, *args, **kwargs):
+    """Raccourci vers asyncio.to_thread : tous les appels LLM/pandas/sandbox de
+    ce module sont synchrones et bloqueraient sinon la boucle d'événements pour
+    toutes les autres sessions pendant toute leur durée (jusqu'à 180s pour un
+    tournoi ML ou un grid search SARIMA)."""
+    return asyncio.to_thread(func, *args, **kwargs)
 from app.services.gemini_service import ask_gemini, generate_visualization_code
 from app.services.ml_service import generate_ml_code, generate_ml_interpretation, detect_model_family
 from app.services.model_specs import MODEL_SPECS, ModelFamily
@@ -77,11 +84,11 @@ async def _run_dataset_intent(intent, session_id, message, model, history, file_
         if file_bytes:
             from app.services.pandasai_service import ask_pandasai
             yield _step("compute", "Calcul des statistiques sur vos données…")
-            result = ask_pandasai(file_bytes, filename, message, model=model)
+            result = await to_thread(ask_pandasai, file_bytes, filename, message, model=model)
 
             if result["error"]:
                 yield _step("thinking", "Réflexion…")
-                response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
+                response = await to_thread(ask_gemini, prompt=message, history=history, data_context=data_context, model=model)
             else:
                 images = result["images"]
                 raw_output = result["output"]
@@ -96,11 +103,11 @@ Présente ce résultat de façon claire et accessible en français (2-4 phrases)
 Ne répète pas les chiffres bruts si le résultat parle de lui-même — explique leur signification.
 """
                 yield _step("interpreting", "Interprétation des résultats…")
-                interpretation = ask_gemini(prompt=interp_prompt, history=history, model=model)
+                interpretation = await to_thread(ask_gemini, prompt=interp_prompt, history=history, model=model)
                 response = f"{raw_output}\n\n---\n\n{interpretation}" if raw_output and raw_output != "Aucun résultat retourné." else interpretation
         else:
             yield _step("thinking", "Réflexion…")
-            response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
+            response = await to_thread(ask_gemini, prompt=message, history=history, data_context=data_context, model=model)
         yield {"type": "result", "response": response, "images": images}
         return
 
@@ -115,7 +122,8 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
             # Signale au frontend qu'un modèle est en cours de génération
             # (placeholder animé dans « Éléments générés »).
             yield {"type": "step", "phase": "model_generating", "message": "Modélisation rigoureuse (ARIMA/SARIMA, stationnarité, gates)…"}
-            ts = run_rigorous_timeseries(
+            ts = await to_thread(
+                run_rigorous_timeseries,
                 question=message,
                 data_context=data_context,
                 file_bytes=file_bytes,
@@ -132,10 +140,11 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
             # Repli : moteur de prévision automatique (également sauvegardé comme
             # modèle avec dashboard). En chat l'utilisateur n'a désigné aucune
             # colonne, on déduit donc la série de la structure du fichier.
-            date_col, value_col = infer_series_columns(file_bytes, filename)
+            date_col, value_col = await to_thread(infer_series_columns, file_bytes, filename)
             if date_col and value_col:
                 yield {"type": "step", "phase": "model_generating", "message": "Repli sur la prévision automatique…"}
-                tc = run_autoforecast_timeseries(
+                tc = await to_thread(
+                    run_autoforecast_timeseries,
                     question=message,
                     file_bytes=file_bytes,
                     filename=filename,
@@ -151,10 +160,10 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
                     return
 
             yield _step("thinking", "Réflexion…")
-            response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
+            response = await to_thread(ask_gemini, prompt=message, history=history, data_context=data_context, model=model)
         else:
             yield _step("thinking", "Réflexion…")
-            response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
+            response = await to_thread(ask_gemini, prompt=message, history=history, data_context=data_context, model=model)
         yield {"type": "result", "response": response, "images": images}
         return
 
@@ -162,10 +171,10 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
         spec = None
         if intent == "visualisation":
             yield _step("coding", "Génération du code du graphique…")
-            code = generate_visualization_code(message, data_context, history, model=model)
+            code = await to_thread(generate_visualization_code, message, data_context, history, model=model)
         elif intent == "ml":
             yield _step("thinking", "Choix du type de modèle…")
-            family = detect_model_family(message, model)
+            family = await to_thread(detect_model_family, message, model)
 
             # Régression et classification passent par le tournoi supervisé :
             # tous les modèles de la famille sont mis en concurrence et le
@@ -177,7 +186,8 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
 
                 yield {"type": "step", "phase": "model_generating",
                        "message": "Mise en concurrence des modèles…"}
-                res = run_supervised_tournament(
+                res = await to_thread(
+                    run_supervised_tournament,
                     question=message, file_bytes=file_bytes, filename=filename,
                     session_id=session_id, data_context=data_context,
                     history=history, model=model,
@@ -197,17 +207,18 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
             spec = MODEL_SPECS[family]
             # Signale le début de génération d'un modèle (placeholder animé).
             yield {"type": "step", "phase": "model_generating", "message": f"Génération du code du modèle ({family})…"}
-            code = generate_ml_code(message, data_context, family, history, model)
+            code = await to_thread(generate_ml_code, message, data_context, family, history, model)
         else:
             yield _step("coding", "Génération du code d'analyse…")
-            code = generate_visualization_code(message, data_context, history, model=model)
+            code = await to_thread(generate_visualization_code, message, data_context, history, model=model)
 
         if code and file_bytes:
             yield _step(
                 "executing",
                 "Entraînement du modèle…" if intent == "ml" else "Exécution du code…",
             )
-            result = run_with_autocorrect(
+            result = await to_thread(
+                run_with_autocorrect,
                 initial_code=code,
                 file_bytes=file_bytes,
                 filename=filename,
@@ -235,7 +246,8 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
                 yield _step("interpreting", "Interprétation des résultats…")
                 if intent == "ml":
                     metrics_str = str(result.get("metrics")) if result.get("metrics") else result.get("output", "")
-                    response = generate_ml_interpretation(
+                    response = await to_thread(
+                        generate_ml_interpretation,
                         message, metrics_str, data_context, len(images) > 0, history, model
                     )
                 else:
@@ -246,18 +258,18 @@ Sortie texte du code : {result['output'] or 'Aucune.'}
 {"Un graphique a été généré." if images else ""}
 Rédige une interprétation concise et claire en 2-4 phrases.
 """
-                    response = ask_gemini(prompt=interp_prompt, history=history, model=model)
+                    response = await to_thread(ask_gemini, prompt=interp_prompt, history=history, model=model)
                 yield {"type": "result", "response": response, "images": images, "model_id": saved_model_id, "model_type": "ml" if saved_model_id else None}
                 return
         else:
             yield _step("thinking", "Réflexion…")
-            response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
+            response = await to_thread(ask_gemini, prompt=message, history=history, data_context=data_context, model=model)
         yield {"type": "result", "response": response, "images": images}
         return
 
     # Conversation générale
     yield _step("thinking", "Réflexion…")
-    response = ask_gemini(prompt=message, history=history, data_context=data_context, model=model)
+    response = await to_thread(ask_gemini, prompt=message, history=history, data_context=data_context, model=model)
     yield {"type": "result", "response": response, "images": images}
 
 
@@ -281,7 +293,7 @@ async def _run_chat(request: ChatRequest):
         from app.services.vision_service import VisionNonSupportee, ask_vision
 
         yield _step("searching", "Recherche des pages pertinentes du document…")
-        pages = retrieve_visual_pages(request.session_id, request.message)
+        pages = await to_thread(retrieve_visual_pages, request.session_id, request.message)
         sources = [{"page": p["page"], "text": ""} for p in pages]
         prompt = f"""
 Question : {request.message}
@@ -292,8 +304,8 @@ Réponds uniquement à partir des pages du document ci-jointes.
             # Route vers le modèle multimodal du fournisseur choisi. Si celui-ci
             # n'a pas de vision, on le dit — sans rerouter vers un autre
             # fournisseur, ce qui enverrait le document ailleurs que prévu.
-            response = ask_vision(prompt, [p["image_bytes"] for p in pages],
-                                  model=request.model, history=history)
+            response = await to_thread(ask_vision, prompt, [p["image_bytes"] for p in pages],
+                                        model=request.model, history=history)
         except VisionNonSupportee as exc:
             yield {"type": "result", "response": str(exc), "images": [], "sources": sources}
             return
@@ -308,7 +320,7 @@ Réponds uniquement à partir des pages du document ci-jointes.
         intent = None
         if embedded_bytes:
             yield _step("thinking", "Analyse de votre question…")
-            intent = detect_intent(request.message, request.model)
+            intent = await to_thread(detect_intent, request.message, request.model)
 
         if embedded_bytes and intent in DATASET_INTENTS:
             table_context = get_embedded_table_context(request.session_id)
@@ -323,7 +335,7 @@ Réponds uniquement à partir des pages du document ci-jointes.
         else:
             from app.services.rag_service import retrieve_context_with_sources
             yield _step("searching", "Recherche des passages pertinents…")
-            context, sources = retrieve_context_with_sources(request.session_id, request.message)
+            context, sources = await to_thread(retrieve_context_with_sources, request.session_id, request.message)
             table_context = get_embedded_table_context(request.session_id)
             prompt = f"""
 Extraits du document pertinents (numérotés) :
@@ -335,14 +347,14 @@ Réponds uniquement à partir du document{" et du tableau de données ci-dessus"
 Après chaque affirmation qui s'appuie sur un extrait ci-dessus, ajoute immédiatement sa référence entre crochets (ex: [1]), en utilisant le numéro de l'extrait correspondant [Source N]. Si une affirmation combine plusieurs extraits, répète les crochets (ex: [1][2]). N'invente jamais de numéro qui ne correspond à aucun extrait fourni, et n'ajoute pas de liste de sources séparée à la fin : les références doivent être insérées directement dans le texte, au fil de la réponse.
 """
             yield _step("writing", "Rédaction de la réponse…")
-            response = ask_gemini(prompt=prompt, history=history, model=request.model)
+            response = await to_thread(ask_gemini, prompt=prompt, history=history, model=request.model)
 
     # ── Chemin A : données tabulaires ─────────────────────────
     else:
         data_context = get_data_context(request.session_id)
         file_bytes, filename = get_file_bytes(request.session_id)
         yield _step("thinking", "Analyse de votre question…")
-        intent = detect_intent(request.message, request.model)
+        intent = await to_thread(detect_intent, request.message, request.model)
         async for event in _run_dataset_intent(
             intent, request.session_id, request.message, request.model, history,
             file_bytes, filename, data_context

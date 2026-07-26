@@ -8,6 +8,10 @@ def get_db_connection():
     os.makedirs(DB_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    # SQLite désactive les clés étrangères par défaut : sans ça, les
+    # ON DELETE CASCADE déclarés sur messages/datasets/models (ci-dessous)
+    # sont ignorés et ces lignes survivent à la suppression de leur session.
+    conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 def init_db():

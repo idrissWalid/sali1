@@ -19,6 +19,13 @@ Avant de lancer l'application, vous devez configurer vos variables d'environneme
    GEMINI_API_KEY=votre_cle_api_gemini_ici
    ```
 
+2. **Avant tout déploiement hors localhost**, protégez l'API avec une clé partagée (aucun endpoint n'est authentifié sinon) :
+   ```bash
+   # Toujours dans backend/.env
+   API_AUTH_KEY=une_valeur_secrete_longue_et_aleatoire
+   ```
+   Sans cette variable, l'API reste ouverte (comportement par défaut, pratique en local). Une fois définie, toute requête doit porter l'en-tête `X-API-Key` avec la même valeur — le frontend la lit depuis `NEXT_PUBLIC_API_KEY` (à définir côté frontend avec la même valeur) et l'ajoute automatiquement.
+
 ## Lancement avec Docker (Recommandé)
 
 Le fichier `docker-compose.yml` est configuré avec les limites de mémoire adéquates pour faire tourner les modèles de Machine Learning du backend (ex: pandasai, ydata-profiling, etc).

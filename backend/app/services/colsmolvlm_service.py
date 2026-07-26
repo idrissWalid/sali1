@@ -10,6 +10,7 @@ quelles (images) à un LLM multimodal (Gemini) pour la génération de la
 réponse — il n'y a jamais de texte OCR intermédiaire.
 """
 
+import shutil
 from pathlib import Path
 
 import fitz  # pymupdf
@@ -80,6 +81,15 @@ def index_visual_document(session_id: str, file_bytes: bytes) -> dict:
         return {"status": "ok", "n_pages": len(images)}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+def delete_visual_session(session_id: str) -> None:
+    """Supprime les pages rendues et les embeddings persistés pour une session
+    document_visual (aucune trace de ces sessions n'existe ailleurs : pas de
+    fichier `sessions.file_path`, pas de collection ChromaDB)."""
+    session_dir = DATA_DIR / session_id
+    if session_dir.exists():
+        shutil.rmtree(session_dir, ignore_errors=True)
 
 
 def retrieve_visual_pages(session_id: str, question: str, top_k: int = 3) -> list:

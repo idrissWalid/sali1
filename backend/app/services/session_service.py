@@ -119,6 +119,51 @@ def rename_session(session_id: str, title: str) -> bool:
     conn.close()
     return updated
 
+def delete_session_cascade(session_id: str) -> Optional[dict]:
+    """Supprime une session et toutes ses données : messages, jeux de données
+    secondaires et modèles suivent via ON DELETE CASCADE (PRAGMA foreign_keys
+    activé dans core/database.py). Cette fonction s'occupe en plus de ce que
+    SQL ne sait pas faire : les fichiers physiques (dataset principal, tableau
+    intégré, datasets secondaires, .pkl des modèles).
+
+    Renvoie {"type": ...} pour laisser l'appelant nettoyer le stockage
+    spécifique au type de session (collection ChromaDB, embeddings visuels),
+    ou None si la session n'existe pas.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT type, file_path, embedded_table_file_path FROM sessions WHERE id = ?",
+        (session_id,)
+    )
+    session_row = cursor.fetchone()
+    if not session_row:
+        conn.close()
+        return None
+
+    file_paths = [session_row["file_path"], session_row["embedded_table_file_path"]]
+
+    cursor.execute("SELECT file_path FROM datasets WHERE session_id = ?", (session_id,))
+    file_paths.extend(row["file_path"] for row in cursor.fetchall())
+
+    cursor.execute("SELECT file_path FROM models WHERE session_id = ?", (session_id,))
+    file_paths.extend(row["file_path"] for row in cursor.fetchall())
+
+    cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+    conn.commit()
+    conn.close()
+
+    for path in file_paths:
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError as e:
+                print(f"Erreur de suppression du fichier {path}: {e}")
+
+    return {"type": session_row["type"]}
+
+
 def set_session_type(session_id: str, session_type: str):
     conn = get_db_connection()
     cursor = conn.cursor()

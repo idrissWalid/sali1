@@ -1,3 +1,4 @@
+import asyncio
 import pandas as pd
 import numpy as np
 import json
@@ -326,7 +327,7 @@ async def analyze_tabular(file_bytes: bytes, filename: str, model: str | None = 
     import pandas as pd
 
     model = model or config.get_default_model()
-    result = load_tabular(file_bytes, filename)
+    result = await asyncio.to_thread(load_tabular, file_bytes, filename)
     if result["status"] == "error":
         return result
 
@@ -334,14 +335,14 @@ async def analyze_tabular(file_bytes: bytes, filename: str, model: str | None = 
 
     ext = filename.split(".")[-1].lower()
     if ext == "csv":
-        df = pd.read_csv(pd.io.common.BytesIO(file_bytes))
+        df = await asyncio.to_thread(pd.read_csv, pd.io.common.BytesIO(file_bytes))
     else:
-        df = pd.read_excel(pd.io.common.BytesIO(file_bytes))
+        df = await asyncio.to_thread(pd.read_excel, pd.io.common.BytesIO(file_bytes))
 
     # Utilisation de ydata-profiling pour les statistiques descriptives
-    stats = generate_profiling_stats(df)
+    stats = await asyncio.to_thread(generate_profiling_stats, df)
     prompt = build_analysis_prompt(profile, stats)
-    interpretation = ask_gemini(prompt, model=model)
+    interpretation = await asyncio.to_thread(ask_gemini, prompt, model=model)
 
     from app.services.session_service import save_initial_analysis
     return {
@@ -413,7 +414,7 @@ async def interpret_variable(
 
     prompt = _build_variable_interpretation_prompt(variable, var_stats, overview)
     try:
-        interpretation = complete_text(prompt, model).strip()
+        interpretation = (await asyncio.to_thread(complete_text, prompt, model)).strip()
     except Exception as exc:
         return {"error": f"Impossible de générer l'interprétation : {exc}"}
 

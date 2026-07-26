@@ -14,6 +14,10 @@ COPY . .
 # but Next.js bakes NEXT_PUBLIC_ variables into the build. We will define a default.
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+# Vide par défaut : authentification désactivée tant qu'API_AUTH_KEY n'est pas
+# défini côté backend (voir README).
+ARG NEXT_PUBLIC_API_KEY=
+ENV NEXT_PUBLIC_API_KEY=$NEXT_PUBLIC_API_KEY
 
 RUN npm run build
 

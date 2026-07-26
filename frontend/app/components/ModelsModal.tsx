@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Modal from './Modal';
+import { API_URL } from '@/lib/api';
 import { Download, LayoutDashboard, Sparkles } from 'lucide-react';
 
 interface ModelInfo {
@@ -30,7 +31,7 @@ export default function ModelsModal({ sessionId, onClose, isOpen = true }: Model
     async function fetchModels() {
       try {
         setLoading(true);
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const apiUrl = API_URL;
         const res = await fetch(`${apiUrl}/api/models/${sessionId}`);
         if (!res.ok) throw new Error("Erreur de récupération des modèles");
         const data = await res.json();
@@ -50,7 +51,7 @@ export default function ModelsModal({ sessionId, onClose, isOpen = true }: Model
   if (!isOpen) return null;
 
   const handleDownload = (modelId: string) => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiUrl = API_URL;
     window.open(`${apiUrl}/api/models/${modelId}/download`, '_blank');
   };
 

@@ -15,20 +15,22 @@ backend/app/services/__pycache__/
 # Frontend
 frontend/node_modules/
 frontend/.next/
+fr_claude/node_modules/
+fr_claude/.next/
 
 # IDEs and OS
 .vscode/
 .idea/
 .DS_Store
 
-# Local Data
-backend/data/
-
 # Large ML Models (too large for GitHub - >100MB)
 backend/BLEURT-20-D12/
 backend/BLEURT-20-D12.zip
 backend/*.zip
-backend/models/
+
+# Rapports générés par backend/eval_server.py (harnais d'évaluation manuel) —
+# artefacts de sortie, pas du code source.
+backend/eval_report_*.pdf
 
 
 # Runtime Data (generated at runtime, not source code)

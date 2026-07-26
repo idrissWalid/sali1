@@ -32,10 +32,15 @@ services:
       args:
         # Define where the frontend should look for the API in the browser
         - NEXT_PUBLIC_API_URL=http://localhost:8000
+        # Doit correspondre à API_AUTH_KEY dans backend/.env. Vide par défaut
+        # (auth désactivée) ; exportez NEXT_PUBLIC_API_KEY avant `docker-compose
+        # up` pour la définir — voir README.
+        - NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY:-}
     ports:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_KEY=${NEXT_PUBLIC_API_KEY:-}
     depends_on:
       - backend
     deploy:

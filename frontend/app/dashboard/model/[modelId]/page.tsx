@@ -6,6 +6,7 @@ import { toggleTheme, useTheme } from "@/hooks/use-theme";
 import { AlertTriangle, ArrowLeft, Crosshair, Sun, Moon, Loader2 } from 'lucide-react';
 import TimeSeriesModelView, { TimeSeriesReport } from '@/app/components/TimeSeriesModelView';
 import SupervisedModelView, { SupervisedReport } from '@/app/components/SupervisedModelView';
+import { API_URL } from '@/lib/api';
 
 interface ModelInfo {
   id: string;
@@ -32,7 +33,7 @@ export default function ModelDashboard() {
     async function fetchModelInfo() {
       try {
         setLoading(true);
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const apiUrl = API_URL;
         const res = await fetch(`${apiUrl}/api/models/info/${modelId}`);
         if (!res.ok) throw new Error("Erreur lors de la récupération des détails du modèle");
         const data = await res.json();
@@ -73,7 +74,7 @@ export default function ModelDashboard() {
         }
       });
 
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/models/${modelId}/predict`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

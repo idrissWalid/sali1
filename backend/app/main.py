@@ -1,12 +1,14 @@
 import torch  # Import torch first to avoid DLL initialization error (WinError 1114)
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.api.chat import router as chat_router
 from app.api.upload import router as upload_router
 from app.api.report import router as report_router
 from app.api.session import router as session_router
 from app.api.audio import router as audio_router
 from app.api.settings import router as settings_router
+from app.core import config
 from app.core.database import init_db
 from app.core.json_utils import SafeJSONResponse
 
@@ -29,6 +31,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+API_AUTH_KEY_HEADER = "X-API-Key"
+# Endpoints publics même quand une clé est configurée : sondes de vie utilisées
+# par l'orchestrateur/la plateforme de déploiement, qui n'a pas la clé.
+_PUBLIC_PATHS = {"/", "/health"}
+
+
+@app.middleware("http")
+async def enforce_api_key(request: Request, call_next):
+    """Exige l'en-tête X-API-Key sur toute requête si API_AUTH_KEY est définie
+    dans backend/.env. Sans cette variable (cas par défaut, usage local),
+    l'authentification reste désactivée — voir README."""
+    expected_key = config.get_api_auth_key()
+    if (
+        not expected_key
+        or request.method == "OPTIONS"  # préflight CORS : jamais d'en-tête personnalisé
+        or request.url.path in _PUBLIC_PATHS
+    ):
+        return await call_next(request)
+
+    if request.headers.get(API_AUTH_KEY_HEADER) != expected_key:
+        return JSONResponse(status_code=401, content={"detail": "Clé API invalide ou manquante."})
+
+    return await call_next(request)
+
 
 from app.api.models import router as models_router
 

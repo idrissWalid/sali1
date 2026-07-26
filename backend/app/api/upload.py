@@ -142,7 +142,7 @@ async def upload_file(
             await asyncio.sleep(0.05)
 
             try:
-                embedded_table_df = extract_table_from_pdf(file_bytes)
+                embedded_table_df = await asyncio.to_thread(extract_table_from_pdf, file_bytes)
             except Exception:
                 embedded_table_df = None
 
@@ -156,7 +156,7 @@ async def upload_file(
                 # rapport, embedded_table_df est conservé pour être attaché à la
                 # session document comme dataset secondaire (cf. plus bas).
                 from app.services.rag_service import extract_text_from_pdf as _extract_pdf_text
-                full_text = _extract_pdf_text(file_bytes)
+                full_text = await asyncio.to_thread(_extract_pdf_text, file_bytes)
                 table_text_len = sum(len(str(v)) for row in extracted_df.itertuples(index=False) for v in row)
                 narrative_len = max(len(full_text) - table_text_len, 0)
                 if narrative_len > 400:
@@ -178,7 +178,7 @@ async def upload_file(
             await asyncio.sleep(0.05)
 
             try:
-                check = load_tabular(file_bytes, filename)
+                check = await asyncio.to_thread(load_tabular, file_bytes, filename)
                 if check["status"] == "error":
                     yield json.dumps({
                         "status": "error",
@@ -252,7 +252,8 @@ async def upload_file(
 
                 # Titre déduit du contenu : sans ça, trois imports du même fichier
                 # donnent trois entrées identiques dans l'historique des sessions.
-                titre = titre_depuis_donnees(
+                titre = await asyncio.to_thread(
+                    titre_depuis_donnees,
                     filename, result["profile"], result["interpretation"], model=model,
                 )
                 rename_session(session_id, titre)
@@ -297,7 +298,7 @@ async def upload_file(
                 set_session_type(session_id, "document")
 
                 if index_doc.lower() == "true":
-                    index_result = index_document(session_id, file_bytes, filename)
+                    index_result = await asyncio.to_thread(index_document, session_id, file_bytes, filename)
                     chunks_indexed = index_result.get("chunks_indexed", 0)
                 else:
                     chunks_indexed = 0
@@ -317,9 +318,9 @@ async def upload_file(
 
                     table_csv_bytes = embedded_table_df.to_csv(index=False).encode("utf-8")
                     table_filename = Path(filename).stem + ".csv"
-                    table_check = load_tabular(table_csv_bytes, table_filename)
+                    table_check = await asyncio.to_thread(load_tabular, table_csv_bytes, table_filename)
                     if table_check["status"] == "ok":
-                        table_stats = generate_profiling_stats(embedded_table_df)
+                        table_stats = await asyncio.to_thread(generate_profiling_stats, embedded_table_df)
                         save_embedded_table(session_id, table_csv_bytes, table_filename, table_check["profile"], table_stats)
                         has_embedded_table = True
                 except Exception:
@@ -335,9 +336,9 @@ async def upload_file(
 
             try:
                 from app.services.rag_service import extract_text_from_pdf
-                raw_context = extract_text_from_pdf(file_bytes)
+                raw_context = await asyncio.to_thread(extract_text_from_pdf, file_bytes)
                 if index_doc.lower() == "true" and chunks_indexed > 0:
-                    indexed_context = summarize_document(session_id, model=model)
+                    indexed_context = await asyncio.to_thread(summarize_document, session_id, model=model)
                     if indexed_context.strip():
                         raw_context = indexed_context
                 else:
@@ -357,7 +358,7 @@ async def upload_file(
 
                     try:
                         from app.services.ocr_service import ocr_pdf_pages, extract_table_from_ocr
-                        ocr_pages = ocr_pdf_pages(file_bytes)
+                        ocr_pages = await asyncio.to_thread(ocr_pdf_pages, file_bytes)
                         ocr_text = "\n\n".join(p["text"] for p in ocr_pages if p["text"].strip()).strip()
                     except Exception:
                         ocr_pages, ocr_text = [], ""
@@ -365,7 +366,9 @@ async def upload_file(
                     if ocr_text:
                         if index_doc.lower() == "true":
                             try:
-                                ocr_index = index_document(session_id, file_bytes, filename, text=ocr_text)
+                                ocr_index = await asyncio.to_thread(
+                                    index_document, session_id, file_bytes, filename, text=ocr_text
+                                )
                                 chunks_indexed = ocr_index.get("chunks_indexed", 0)
                             except Exception:
                                 chunks_indexed = 0
@@ -375,18 +378,18 @@ async def upload_file(
                             from app.services.profiling_service import generate_profiling_stats
                             from app.services.session_service import save_embedded_table
 
-                            ocr_table_df = extract_table_from_ocr(ocr_pages)
+                            ocr_table_df = await asyncio.to_thread(extract_table_from_ocr, ocr_pages)
                             if ocr_table_df is not None:
                                 table_csv_bytes = ocr_table_df.to_csv(index=False).encode("utf-8")
                                 table_filename = Path(filename).stem + ".csv"
-                                table_check = load_tabular(table_csv_bytes, table_filename)
+                                table_check = await asyncio.to_thread(load_tabular, table_csv_bytes, table_filename)
                                 if table_check["status"] == "ok":
                                     save_embedded_table(
                                         session_id,
                                         table_csv_bytes,
                                         table_filename,
                                         table_check["profile"],
-                                        generate_profiling_stats(ocr_table_df),
+                                        await asyncio.to_thread(generate_profiling_stats, ocr_table_df),
                                     )
                                     has_embedded_table = True
                         except Exception:
@@ -418,7 +421,7 @@ async def upload_file(
                         }) + "\n"
                         return
 
-                    visual_result = index_visual_document(session_id, file_bytes)
+                    visual_result = await asyncio.to_thread(index_visual_document, session_id, file_bytes)
                     if visual_result.get("status") != "ok":
                         yield json.dumps({
                             "status": "error",
@@ -429,7 +432,7 @@ async def upload_file(
 
                     _set_session_type(session_id, "document_visual")
 
-                    preview_images = render_pdf_to_images(file_bytes)[:4]
+                    preview_images = (await asyncio.to_thread(render_pdf_to_images, file_bytes))[:4]
                     preview_png_bytes = []
                     for img in preview_images:
                         buf = _io.BytesIO()
@@ -457,7 +460,7 @@ async def upload_file(
                     [Propose 3 questions ou analyses pertinentes suggérées par ce document]
                     """
                     try:
-                        summary = ask_vision(summary_prompt, preview_png_bytes, model=model)
+                        summary = await asyncio.to_thread(ask_vision, summary_prompt, preview_png_bytes, model=model)
                     except VisionNonSupportee as exc:
                         yield json.dumps({
                             "status": "error",
@@ -469,7 +472,7 @@ async def upload_file(
 
                     # Document illisible en texte : le résumé issu de la vision est
                     # la seule description exploitable pour titrer la session.
-                    titre = titre_depuis_document(filename, summary, model=model)
+                    titre = await asyncio.to_thread(titre_depuis_document, filename, summary, model=model)
                     rename_session(session_id, titre)
 
                     yield json.dumps({
@@ -514,12 +517,12 @@ async def upload_file(
                 ### 4. PROPOSITIONS
                 [Propose 3 questions ou analyses pertinentes suggérées par ce document]
                 """
-                summary = ask_gemini(summary_prompt, model=model)
+                summary = await asyncio.to_thread(ask_gemini, summary_prompt, model=model)
                 add_to_history(session_id, "model", summary)
 
                 # Le résumé qu'on vient de produire décrit le document mieux que
                 # son nom de fichier : on s'en sert pour titrer la session.
-                titre = titre_depuis_document(filename, summary or raw_context, model=model)
+                titre = await asyncio.to_thread(titre_depuis_document, filename, summary or raw_context, model=model)
                 rename_session(session_id, titre)
 
                 # Étape 4 : Finalisation de la session

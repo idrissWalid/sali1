@@ -4,6 +4,7 @@ import SplitText from "./SplitText";
 import { UploadIcon } from "./UploadIcon";
 import Modal from "./Modal";
 import { Progress } from "./Progress";
+import { API_URL } from "@/lib/api";
 import { Check, FileText, Search, Table2, X } from "lucide-react";
 
 interface Source {
@@ -76,7 +77,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
     });
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/upload`, {
         method: "POST",
         headers: {

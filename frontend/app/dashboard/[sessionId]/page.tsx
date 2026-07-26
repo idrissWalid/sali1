@@ -8,6 +8,7 @@ import {
   CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell 
 } from "recharts";
 import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy, Sun, Moon, Sparkles } from "lucide-react";
+import { API_URL } from "@/lib/api";
 
 // Colors for charts
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#d0ed57', '#a4de6c'];
@@ -72,7 +73,7 @@ export default function DashboardPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const apiUrl = API_URL;
         const query = selectedDataset ? `?dataset_id=${encodeURIComponent(selectedDataset)}` : "";
         const res = await fetch(`${apiUrl}/api/dashboard/data/${sessionId}${query}`);
         if (!res.ok) throw new Error("Erreur lors de la récupération des données");
@@ -114,7 +115,7 @@ export default function DashboardPage() {
     }
     let cancelled = false;
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiUrl = API_URL;
     const model = typeof window !== "undefined" ? localStorage.getItem("selected_model") || "" : "";
     const params = new URLSearchParams({ variable: selectedVar });
     if (data.dataset_id) params.set("dataset_id", data.dataset_id);

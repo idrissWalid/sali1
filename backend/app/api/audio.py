@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.services.whisper_service import transcribe_audio
 
@@ -17,7 +18,7 @@ async def transcribe_audio_endpoint(file: UploadFile = File(...)):
         
     try:
         content = await file.read()
-        result = transcribe_audio(content, file.filename)
+        result = await asyncio.to_thread(transcribe_audio, content, file.filename)
         
         if result["status"] == "error":
             raise HTTPException(status_code=500, detail=result["message"])

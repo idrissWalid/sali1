@@ -1,3 +1,4 @@
+import asyncio
 import os
 import io
 import json
@@ -124,8 +125,8 @@ async def predict(model_id: str, request: PredictRequest):
         
     try:
         expected_features = json.loads(row["features"]) if row["features"] else []
-        model = joblib.load(row["file_path"])
-        
+        model = await asyncio.to_thread(joblib.load, row["file_path"])
+
         # Prepare DataFrame for prediction (models usually expect 2D arrays/DataFrames)
         input_data = {}
         if expected_features:
@@ -139,9 +140,9 @@ async def predict(model_id: str, request: PredictRequest):
             # S'il n'y a pas de features explicites, on utilise tout ce qu'on reçoit
             input_data = {k: [v] for k, v in request.features.items()}
             df = pd.DataFrame(input_data)
-            
+
         # Predict
-        prediction = model.predict(df)
+        prediction = await asyncio.to_thread(model.predict, df)
 
         reponse = {"prediction": prediction.tolist()}
 
@@ -149,7 +150,7 @@ async def predict(model_id: str, request: PredictRequest):
         # simulation afficherait une classe sans dire à quel point elle est sûre.
         try:
             if hasattr(model, "predict_proba"):
-                proba = model.predict_proba(df)[0]
+                proba = (await asyncio.to_thread(model.predict_proba, df))[0]
                 classes_modele = list(getattr(model, "classes_", range(len(proba))))
                 metriques = json.loads(row["metrics"]) if "metrics" in row.keys() and row["metrics"] else {}
                 libelles = ((metriques.get("artefact") or {}).get("classes")
@@ -192,7 +193,7 @@ async def timeseries_candidates(session_id: str, dataset_id: Optional[str] = Non
     numériques (valeur à prévoir). Alimente la modale d'entraînement."""
     from app.services.timeseries_service import detect_timeseries_columns
 
-    df, _ = _load_dataset_df(session_id, dataset_id)
+    df, _ = await asyncio.to_thread(_load_dataset_df, session_id, dataset_id)
     if df is None:
         raise HTTPException(status_code=404, detail="Jeu de données introuvable.")
 
@@ -216,7 +217,7 @@ async def supervised_candidates(session_id: str, dataset_id: Optional[str] = Non
     """
     from app.services.supervised_specs import SEUIL_DESEQUILIBRE
 
-    df, _ = _load_dataset_df(session_id, dataset_id)
+    df, _ = await asyncio.to_thread(_load_dataset_df, session_id, dataset_id)
     if df is None:
         raise HTTPException(status_code=404, detail="Jeu de données introuvable.")
 
@@ -259,7 +260,8 @@ async def train_supervised(request: TrainSupervisedRequest):
         f"{', '.join(map(str, colonnes)) if colonnes else 'inconnues'}.\n"
         f"Variable à prédire : '{request.target}'."
     )
-    result = run_supervised_tournament(
+    result = await asyncio.to_thread(
+        run_supervised_tournament,
         question=f"Construis le meilleur modèle pour prédire « {request.target} ».",
         file_bytes=file_bytes,
         filename=filename,
@@ -314,19 +316,22 @@ async def train_timeseries(request: TrainTimeSeriesRequest):
     if request.engine == "timecopilot":
         # Le vrai TimeCopilot : agent LLM + modèles de fondation, dans son venv
         # dédié. Pas de repli silencieux — l'utilisateur a choisi ce moteur.
-        result = run_timecopilot_timeseries(
+        result = await asyncio.to_thread(
+            run_timecopilot_timeseries,
             question=question, file_bytes=file_bytes, filename=filename,
             session_id=request.session_id, data_context=data_context, model=llm_model,
             date_col=request.date_col, value_col=request.value_col, horizon=request.horizon,
         )
     elif request.engine == "autoforecast":
-        result = run_autoforecast_timeseries(
+        result = await asyncio.to_thread(
+            run_autoforecast_timeseries,
             question=question, file_bytes=file_bytes, filename=filename,
             session_id=request.session_id, data_context=data_context, model=llm_model,
             date_col=request.date_col, value_col=request.value_col, horizon=request.horizon,
         )
     else:
-        result = run_rigorous_timeseries(
+        result = await asyncio.to_thread(
+            run_rigorous_timeseries,
             question=question, data_context=data_context, file_bytes=file_bytes,
             filename=filename, session_id=request.session_id, model=llm_model,
             date_col=request.date_col, value_col=request.value_col, horizon=request.horizon,

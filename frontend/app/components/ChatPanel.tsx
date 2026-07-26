@@ -9,6 +9,7 @@ import { ImageZoom, Image } from "./ImageZoom";
 import Modal from "./Modal";
 import { PlaceholdersAndVanishInput } from "./PlaceholdersAndVanishInput";
 import WelcomePanel from "./WelcomePanel";
+import { API_URL } from "@/lib/api";
 import {
   FileText, MoreVertical, Settings2,
   Brain, Search, BookOpen, Code2, Play, Lightbulb, PenLine, Sparkles,
@@ -432,7 +433,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
 
         try {
           setLoading(true);
-          const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+          const apiUrl = API_URL;
           const res = await fetch(`${apiUrl}/api/audio/transcribe`, {
             method: "POST",
             body: formData,
@@ -503,7 +504,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     const fetchHistory = async () => {
       try {
         setLoading(true);
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const apiUrl = API_URL;
         const res = await fetch(`${apiUrl}/api/sessions/${sessionId}`);
         if (!res.ok) throw new Error("Erreur serveur");
         const data = await res.json();
@@ -543,7 +544,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     let modelActivityStarted = false;
     let resultModelId: string | null = null;
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       const selected = selectedModel?.trim();
       // Flux NDJSON : le backend annonce chaque étape (recherche de passages,
       // génération de code, interprétation…) avant d'envoyer la réponse finale.
@@ -803,7 +804,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                       {renderMarkdown(msg.text, sendMessage, "content", msg.sources, setSelectedSource)}
                       {msg.isSummary && (
                         <button
-                          onClick={() => window.open(`${process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000"}/api/dashboard/${sessionId}`, "_blank")}
+                          onClick={() => window.open(`${API_URL}/api/dashboard/${sessionId}`, "_blank")}
                           style={{
                             marginTop: "16px",
                             padding: "10px 16px",

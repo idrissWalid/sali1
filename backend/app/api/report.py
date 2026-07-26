@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -29,7 +30,8 @@ async def generate_report(request: ReportRequest):
     data = get_report_data(request.session_id)
 
     if request.format == "pdf":
-        pdf_bytes = build_pdf_report(
+        pdf_bytes = await asyncio.to_thread(
+            build_pdf_report,
             title=request.title,
             institution=request.institution,
             filename=data.get("filename", ""),
@@ -44,7 +46,8 @@ async def generate_report(request: ReportRequest):
         )
 
     elif request.format == "word":
-        docx_bytes = build_word_report(
+        docx_bytes = await asyncio.to_thread(
+            build_word_report,
             title=request.title,
             institution=request.institution,
             filename=data.get("filename", ""),

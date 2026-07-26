@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { AudioLines, BrainCircuit, FileText, FolderOpen, LayoutDashboard, Loader2, LineChart } from "lucide-react";
 import Modal from "./Modal";
 import GlareHover from './GlareHover';
+import { API_URL } from "@/lib/api";
 
 interface Props {
   sessionId: string | null;
@@ -173,7 +174,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
       return;
     }
     let cancelled = false;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiUrl = API_URL;
     fetch(`${apiUrl}/api/models/${sessionId}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -195,7 +196,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
       return;
     }
     let cancelled = false;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiUrl = API_URL;
     fetch(`${apiUrl}/api/sessions/${sessionId}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -217,7 +218,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
       return;
     }
     let cancelled = false;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiUrl = API_URL;
     fetch(`${apiUrl}/api/models/supervised-candidates/${sessionId}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -238,7 +239,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
       return;
     }
     let cancelled = false;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiUrl = API_URL;
     fetch(`${apiUrl}/api/models/timeseries-candidates/${sessionId}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -269,7 +270,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
       return;
     }
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       const reportTitle = keyPoints.trim()
         ? `Rapport d'analyse de données — ${keyPoints.trim().slice(0, 80)}`
         : "Rapport d'analyse de données";
@@ -305,7 +306,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
 
   const refetchModels = async () => {
     if (!sessionId) return;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiUrl = API_URL;
     try {
       const res = await fetch(`${apiUrl}/api/models/${sessionId}`);
       if (res.ok) {
@@ -357,7 +358,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
       setIsTrainingModalOpen(false);
       setModalTraining(true);
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const apiUrl = API_URL;
         const model = typeof window !== "undefined" ? localStorage.getItem("selected_model") || undefined : undefined;
         const res = await fetch(`${apiUrl}/api/models/train-timeseries`, {
           method: "POST",
@@ -391,7 +392,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
       setIsTrainingModalOpen(false);
       setModalTraining(true);
       try {
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const apiUrl = API_URL;
         const model = typeof window !== "undefined" ? localStorage.getItem("selected_model") || undefined : undefined;
         const res = await fetch(`${apiUrl}/api/models/train-supervised`, {
           method: "POST",

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Modal from "./Modal";
+import { API_URL } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -54,7 +55,7 @@ export default function SettingsModal({
   // l'ouverture de la boîte de dialogue "Configuration API".
   useEffect(() => {
     if (!isApiDialogOpen) return;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+    const apiUrl = API_URL;
     fetch(`${apiUrl}/api/settings/providers`)
       .then((res) => res.json())
       .then((data) => {
@@ -356,7 +357,7 @@ export default function SettingsModal({
           setApiError(null);
           setApiSaving(true);
           try {
-            const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+            const apiUrl = API_URL;
             const res = await fetch(`${apiUrl}/api/settings/api-key`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },

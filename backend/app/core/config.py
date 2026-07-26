@@ -63,3 +63,15 @@ def set_api_key(provider: str, value: str) -> None:
     ENV_PATH.touch(exist_ok=True)
     _dotenv_set_key(str(ENV_PATH), env_var, value)
     os.environ[env_var] = value
+
+
+# Clé partagée protégeant l'API elle-même (distincte des clés fournisseurs
+# LLM ci-dessus). Non définie par défaut : usage local sans authentification.
+# À définir dans backend/.env avant tout déploiement hors localhost — voir
+# README. Lue à chaque requête (comme get_default_model) pour rester
+# modifiable sans redéploiement.
+API_AUTH_KEY_ENV_VAR = "API_AUTH_KEY"
+
+
+def get_api_auth_key() -> str | None:
+    return os.getenv(API_AUTH_KEY_ENV_VAR) or None

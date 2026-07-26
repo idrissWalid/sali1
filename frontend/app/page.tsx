@@ -14,6 +14,7 @@ import ShareModal from "./components/ShareModal";
 import AvatarMenu from "./components/AvatarMenu";
 import Modal from "./components/Modal";
 import SourceHistoryDock from "./components/SourceHistoryDock";
+import { API_URL } from "@/lib/api";
 
 interface Source {
   name: string;
@@ -101,7 +102,7 @@ export default function Home() {
 
   const fetchSessions = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/sessions`);
       const data = await res.json();
       setSessions(data || []);
@@ -112,7 +113,7 @@ export default function Home() {
 
   const fetchModels = async () => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/llm-models`);
       const data = await res.json();
       if (data.models) {
@@ -138,7 +139,7 @@ export default function Home() {
 
   const handleSelectSession = async (id: string) => {
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/sessions/${id}`);
       if (!res.ok) throw new Error("Erreur serveur");
       const data = await res.json();
@@ -173,7 +174,7 @@ export default function Home() {
     if (!confirm("Voulez-vous vraiment supprimer cette discussion ?")) return;
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       await fetch(`${apiUrl}/api/sessions/${id}`, { method: "DELETE" });
 
       // Recharger la liste
@@ -196,7 +197,7 @@ export default function Home() {
     setSessions(prev => prev.map(s => (s.id === id ? { ...s, title: trimmed } : s)));
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const apiUrl = API_URL;
       const res = await fetch(`${apiUrl}/api/sessions/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
