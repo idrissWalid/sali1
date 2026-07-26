@@ -151,58 +151,72 @@ export default function ModelDashboard() {
 
   return (
     <div className="dashboard-shell min-h-screen w-full bg-gray-50 dark:bg-[#111] text-gray-900 dark:text-gray-100 font-sans">
-      <div className="mx-auto w-full max-w-5xl px-5 sm:px-8 md:px-10 py-8 flex flex-col gap-6">
-        {/* En-tête */}
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            onClick={() => router.back()}
-            className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-[#222]"
-          >
-            <ArrowLeft size={16} /> Retour
-          </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-2xl sm:text-3xl font-bold tracking-tight">{model.name}</h1>
-            <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">Dashboard prédictif</p>
+      <div className="dashboard-container">
+        
+        {/* Header */}
+        <div className="dashboard-header flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">{model.name}</h1>
+            <p className="text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-2">
+              <Crosshair className="w-4 h-4 text-blue-500" /> Modèle prédictif — Type : <span className="font-semibold text-gray-700 dark:text-gray-300">{model.type}</span>
+            </p>
           </div>
-          <button
-            onClick={toggleTheme}
-            className="grid place-items-center rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] p-2.5 shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-[#222]"
-          >
-            {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={toggleTheme}
+              className="p-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center justify-center text-sm font-medium"
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}
+            </button>
+            <button
+              onClick={() => router.back()}
+              className="px-4 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center gap-2 text-sm font-medium"
+            >
+              <ArrowLeft className="w-4 h-4" /> Retour
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="md:col-span-1 flex flex-col gap-6">
-            <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] p-6 shadow-sm">
-              <h2 className="mb-4 border-b border-gray-100 dark:border-gray-800 pb-3 text-sm font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">
-                Détails du modèle
-              </h2>
+        {/* Global Stats Overview */}
+        <div className="dashboard-stats grid grid-cols-2 md:grid-cols-4">
+          <StatCard title="Type de modèle" value={model.type} icon={Crosshair} />
+          <StatCard title="Caractéristiques" value={model.features?.length ?? 0} icon={Crosshair} />
+          <StatCard title="Date de création" value={new Date(model.created_at).toLocaleDateString("fr-FR")} icon={Crosshair} />
+          <StatCard title="Statut" value="Actif" icon={Crosshair} />
+        </div>
+
+        <div className="dashboard-main-grid grid grid-cols-1 lg:grid-cols-3">
+          {/* Left Column: Details & Performance */}
+          <div className="lg:col-span-1 flex flex-col gap-6">
+            <div className="dashboard-panel bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm">
+              <h2 className="text-xl font-bold mb-4 border-b border-gray-100 dark:border-gray-800 pb-3">Détails du modèle</h2>
               <div className="flex flex-col gap-3 text-sm">
-                <div>
-                  <span className="block text-gray-500 dark:text-gray-400">Type</span>
+                <div className="flex justify-between py-1 border-b border-gray-50 dark:border-gray-800/50">
+                  <span className="text-gray-500 dark:text-gray-400">Identifiant</span>
+                  <span className="font-mono text-xs text-gray-700 dark:text-gray-300 truncate max-w-[150px]">{model.id}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b border-gray-50 dark:border-gray-800/50">
+                  <span className="text-gray-500 dark:text-gray-400">Type</span>
                   <span className="font-medium">{model.type}</span>
                 </div>
-                <div>
-                  <span className="block text-gray-500 dark:text-gray-400">Créé le</span>
+                <div className="flex justify-between py-1">
+                  <span className="text-gray-500 dark:text-gray-400">Créé le</span>
                   <span>{new Date(model.created_at).toLocaleString("fr-FR")}</span>
                 </div>
               </div>
             </div>
 
             {model.metrics && Object.keys(model.metrics).length > 0 && (
-              <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] p-6 shadow-sm">
-                <h2 className="mb-4 border-b border-gray-100 dark:border-gray-800 pb-3 text-sm font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">
-                  Performances
-                </h2>
+              <div className="dashboard-panel bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm">
+                <h2 className="text-xl font-bold mb-4 border-b border-gray-100 dark:border-gray-800 pb-3">Performances</h2>
                 <div className="flex flex-col gap-2">
                   {Object.entries(model.metrics).map(([k, v]) => (
                     <div
                       key={k}
-                      className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 dark:bg-[#222] px-3 py-2 text-sm"
+                      className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 dark:bg-[#222] px-3.5 py-2.5 text-sm"
                     >
                       <span className="text-gray-500 dark:text-gray-400">{k}</span>
-                      <span className="font-mono text-gray-900 dark:text-gray-100">
+                      <span className="font-mono font-semibold text-gray-900 dark:text-gray-100">
                         {typeof v === 'number' ? v.toFixed(4) : String(v)}
                       </span>
                     </div>
@@ -212,10 +226,11 @@ export default function ModelDashboard() {
             )}
           </div>
 
-          <div className="md:col-span-2">
-            <div className="rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] p-6 shadow-sm">
-              <h2 className="mb-5 flex items-center gap-2 border-b border-gray-100 dark:border-gray-800 pb-3 text-sm font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">
-                <Crosshair size={15} strokeWidth={1.8} /> Simulation
+          {/* Right Column: Simulation Form */}
+          <div className="lg:col-span-2">
+            <div className="dashboard-panel bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm">
+              <h2 className="text-xl font-bold mb-5 flex items-center gap-2 border-b border-gray-100 dark:border-gray-800 pb-3">
+                <Crosshair className="w-5 h-5 text-blue-500" /> Simulation &amp; Prédiction
               </h2>
 
               <form onSubmit={handlePredict} className="flex flex-col gap-4">
@@ -229,15 +244,15 @@ export default function ModelDashboard() {
                           required
                           value={formData[feat] || ""}
                           onChange={e => setFormData({ ...formData, [feat]: e.target.value })}
-                          className={champ}
+                          className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#222] px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:outline-none focus:border-blue-500 transition-colors shadow-sm"
                           placeholder={`Valeur pour ${feat}`}
                         />
                       </label>
                     ))}
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2 rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/10 p-4 text-sm text-amber-700 dark:text-amber-400">
-                    <AlertTriangle size={17} className="shrink-0" />
+                  <div className="flex items-center gap-2 rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/10 p-4 text-sm text-amber-700 dark:text-amber-400">
+                    <AlertTriangle className="w-5 h-5 shrink-0" />
                     Ce modèle ne spécifie pas de caractéristiques d&apos;entrée claires. Les prédictions peuvent échouer.
                   </div>
                 )}
@@ -246,19 +261,19 @@ export default function ModelDashboard() {
                   <button
                     type="submit"
                     disabled={predicting}
-                    className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-60"
+                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold rounded-xl shadow-sm transition flex items-center gap-2 text-sm"
                   >
-                    {predicting ? <><Loader2 size={15} className="animate-spin" /> Calcul en cours…</> : "Générer la prédiction"}
+                    {predicting ? <><Loader2 className="w-4 h-4 animate-spin" /> Calcul en cours…</> : "Générer la prédiction"}
                   </button>
                 </div>
               </form>
 
               {prediction !== null && (
-                <div className="mt-6 rounded-xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-[#202020] p-5">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                <div className="mt-6 rounded-2xl border border-blue-100 dark:border-blue-950 bg-blue-50/50 dark:bg-blue-900/20 p-5">
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-blue-600 dark:text-blue-400">
                     Résultat de la prédiction
                   </h3>
-                  <div className="mt-1 break-all font-mono text-2xl font-bold">
+                  <div className="mt-2 break-all font-mono text-2xl font-bold text-gray-900 dark:text-gray-100">
                     {Array.isArray(prediction) ? JSON.stringify(prediction[0]) : JSON.stringify(prediction)}
                   </div>
                 </div>
@@ -266,7 +281,59 @@ export default function ModelDashboard() {
             </div>
           </div>
         </div>
+
+      </div>
+
+      <style dangerouslySetInnerHTML={{__html: `
+        .dashboard-shell {
+          padding: 32px clamp(20px, 4vw, 72px) 48px;
+        }
+        .dashboard-container {
+          width: min(100%, 1680px);
+          margin: 0 auto;
+          display: grid;
+          gap: 24px;
+        }
+        .dashboard-header { gap: 24px; }
+        .dashboard-stats { gap: 16px; }
+        .dashboard-main-grid { gap: 24px; align-items: stretch; }
+        .dashboard-panel { padding: 24px; }
+        .dashboard-stat { min-height: 104px; padding: 20px; }
+        @media (max-width: 640px) {
+          .dashboard-shell { padding: 20px 14px 32px; }
+          .dashboard-container { gap: 16px; }
+          .dashboard-header { align-items: flex-start; flex-direction: column; gap: 16px; }
+          .dashboard-header > div:last-child { width: 100%; }
+          .dashboard-header button:last-child { flex: 1; justify-content: center; }
+          .dashboard-stats { gap: 10px; }
+          .dashboard-main-grid { gap: 16px; }
+          .dashboard-panel { padding: 18px; }
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+          height: 6px;
+          width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background-color: rgba(150, 150, 150, 0.3);
+          border-radius: 10px;
+        }
+      `}} />
+    </div>
+  );
+}
+
+function StatCard({ title, value, icon: Icon }: { title: string, value: string | number, icon: React.ComponentType<{ className?: string }> }) {
+  return (
+    <div className="dashboard-stat bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm flex items-start gap-4">
+      <div className="bg-gray-50 dark:bg-[#222] p-3 rounded-xl text-blue-500"><Icon className="w-6 h-6" /></div>
+      <div className="min-w-0">
+        <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">{title}</p>
+        <p className="text-2xl font-bold mt-1 truncate">{value}</p>
       </div>
     </div>
   );
 }
+

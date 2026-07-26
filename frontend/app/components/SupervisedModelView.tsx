@@ -119,7 +119,7 @@ const QUALITES: Record<string, string> = {
 
 function Card({ title, extra, children, delay }: { title: React.ReactNode; extra?: React.ReactNode; children: React.ReactNode; delay: number }) {
   return (
-    <div className="sv-card rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] p-6 shadow-sm" style={{ animationDelay: `${delay}ms` }}>
+    <div className="dashboard-panel bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm sv-card" style={{ animationDelay: `${delay}ms` }}>
       <div className="mb-4 flex items-center justify-between gap-2 border-b border-gray-100 dark:border-gray-800 pb-3">
         <h3 className="text-sm font-bold uppercase tracking-wide text-gray-600 dark:text-gray-300">{title}</h3>
         {extra}
@@ -140,13 +140,13 @@ function Row({ k, v, accent }: { k: string; v: React.ReactNode; accent?: string 
 
 function StatTile({ icon: Icon, label, value, accent, delay }: { icon: React.ComponentType<{ className?: string }>; label: string; value: React.ReactNode; accent?: string; delay: number }) {
   return (
-    <div className="sv-card flex items-start gap-4 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] p-5 shadow-sm" style={{ animationDelay: `${delay}ms` }}>
-      <div className={`grid place-items-center rounded-xl p-3 ${accent ?? "text-blue-500 bg-blue-50 dark:bg-blue-500/10"}`}>
-        <Icon className="w-5 h-5" />
+    <div className="dashboard-stat bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm flex items-start gap-4 sv-card" style={{ animationDelay: `${delay}ms` }}>
+      <div className={`p-3 rounded-xl ${accent ?? "bg-gray-50 dark:bg-[#222] text-blue-500"}`}>
+        <Icon className="w-6 h-6" />
       </div>
       <div className="min-w-0">
         <p className="text-sm text-gray-500 dark:text-gray-400 font-medium">{label}</p>
-        <p className="mt-1 text-xl font-bold truncate">{value}</p>
+        <p className="mt-1 text-2xl font-bold truncate">{value}</p>
       </div>
     </div>
   );
@@ -432,40 +432,54 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
         .sv-card { animation: sv-fade-up .45s ease-out both; }
         .sv-scroll::-webkit-scrollbar { height: 6px; width: 6px; }
         .sv-scroll::-webkit-scrollbar-thumb { background-color: rgba(150,150,150,.3); border-radius: 10px; }
+        .dashboard-shell { padding: 32px clamp(20px, 4vw, 72px) 48px; }
+        .dashboard-container { width: min(100%, 1680px); margin: 0 auto; display: grid; gap: 24px; }
+        .dashboard-header { gap: 24px; }
+        .dashboard-stats { gap: 16px; }
+        .dashboard-panel { padding: 24px; }
+        .dashboard-stat { min-height: 104px; padding: 20px; }
       `}</style>
 
-      <div className="mx-auto w-full max-w-6xl px-5 sm:px-8 md:px-10 py-8 flex flex-col gap-6">
-        {/* En-tête */}
-        <div className="flex flex-wrap items-center gap-3">
-          <button onClick={onBack} className="flex items-center gap-2 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-[#222]">
-            <ArrowLeft size={16} /> Retour
-          </button>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-2xl sm:text-3xl font-bold tracking-tight">{model.name}</h1>
-            <p className="mt-0.5 flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-              <Target className="w-4 h-4" />
-              {FAMILLES[r.famille ?? ""] ?? "Modèle supervisé"} — cible : <strong>{r.cible}</strong>
+      <div className="dashboard-container">
+        {/* Header */}
+        <div className="dashboard-header flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">{model.name}</h1>
+            <p className="text-gray-500 dark:text-gray-400 mt-1 flex items-center gap-2">
+              <Target className="w-4 h-4 text-blue-500" />
+              {FAMILLES[r.famille ?? ""] ?? "Modèle supervisé"} — Cible : <span className="font-semibold text-gray-700 dark:text-gray-300">{r.cible}</span>
             </p>
           </div>
-          <span className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium ${statut.cls}`}>
-            <StatutIcon size={15} /> {statut.label}
-          </span>
-          {artefact.disponible && (
-            <a
-              href={`${apiUrl}/api/models/${model.id}/download`}
-              className="inline-flex items-center gap-2 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] px-4 py-2 text-sm font-medium shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-[#222]"
-              title="Pipeline scikit-learn sérialisé (encodage inclus) — s'utilise avec joblib.load()"
+          <div className="flex items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-sm font-medium ${statut.cls}`}>
+              <StatutIcon size={15} /> {statut.label}
+            </span>
+            {artefact.disponible && (
+              <a
+                href={`${apiUrl}/api/models/${model.id}/download`}
+                className="px-4 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center gap-2 text-sm font-medium"
+                title="Pipeline scikit-learn sérialisé (encodage inclus) — s'utilise avec joblib.load()"
+              >
+                <Download size={15} /> Exporter (.pkl)
+              </a>
+            )}
+            <button
+              onClick={toggleTheme}
+              className="p-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center justify-center text-sm font-medium"
             >
-              <Download size={15} /> Exporter (.pkl)
-            </a>
-          )}
-          <button onClick={toggleTheme} className="grid place-items-center rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-[#1a1a1a] p-2.5 shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-[#222]">
-            {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}
-          </button>
+              {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}
+            </button>
+            <button
+              onClick={onBack}
+              className="px-4 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center gap-2 text-sm font-medium"
+            >
+              <ArrowLeft className="w-4 h-4" /> Retour
+            </button>
+          </div>
         </div>
 
-        {/* Tuiles */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {/* Global Stats Overview */}
+        <div className="dashboard-stats grid grid-cols-2 md:grid-cols-4">
           <StatTile icon={Trophy} label="Modèle retenu" value={retenu.libelle ?? "—"} delay={0} />
           <StatTile
             icon={Gauge}
