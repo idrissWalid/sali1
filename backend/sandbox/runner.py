@@ -102,12 +102,31 @@ def main():
     result = {
         "output": output,
         "images": images,
+        "charts": _json_safe(local_env.get("charts", [])),
         "metrics": metrics_data,
         "models": extracted_models,
         "error": error_info,
     }
     sys.stdout.write(json.dumps(result, ensure_ascii=False))
     sys.stdout.flush()
+
+
+def _json_safe(value):
+    """Convertit les sorties pandas/numpy en valeurs JSON strictes."""
+    import math
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if hasattr(value, "item"):
+        return _json_safe(value.item())
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return str(value)
 
 
 def _build_env(data_b64: str | None, filename: str | None) -> dict:
@@ -178,7 +197,7 @@ def _build_env(data_b64: str | None, filename: str | None) -> dict:
 
 
 def _exit_error(msg: str):
-    result = {"output": "", "images": [], "error": msg}
+    result = {"output": "", "images": [], "charts": [], "error": msg}
     sys.stdout.write(json.dumps(result))
     sys.stdout.flush()
 

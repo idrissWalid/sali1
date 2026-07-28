@@ -10,13 +10,12 @@ backend/app/services/__pycache__/
 *.env
 .env
 .env.*
+!**/.env.example
 
 
 # Frontend
 frontend/node_modules/
 frontend/.next/
-fr_claude/node_modules/
-fr_claude/.next/
 
 # IDEs and OS
 .vscode/

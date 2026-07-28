@@ -36,6 +36,13 @@ interface DashboardData {
     pct_valeurs_manquantes_total?: number;
     n_doublons?: number;
   };
+  missing_insight?: {
+    n_valeurs_manquantes: number;
+    pct_cellules_manquantes: number;
+    n_lignes_affectees: number;
+    pct_lignes_affectees: number;
+    n_colonnes_affectees: number;
+  };
   preview: Record<string, unknown>[];
   variables: Record<string, unknown>;
   distributions: Record<string, {
@@ -157,8 +164,13 @@ export default function DashboardPage() {
 
   if (!data) return null;
 
-  const { overview, preview, variables, distributions, filename } = data;
+  const { overview, missing_insight, preview, variables, distributions, filename } = data;
   const activeDist = selectedVar ? distributions[selectedVar] : null;
+  const selectedVarInfo = selectedVar
+    ? variables[selectedVar] as { n_manquantes?: number; pct_manquantes?: number } | undefined
+    : undefined;
+  const selectedMissing = selectedVarInfo?.n_manquantes ?? 0;
+  const selectedValid = Math.max(0, (overview.n_lignes ?? 0) - selectedMissing);
 
   // Le backend choisit le graphique adapté à la nature de la colonne. On garde
   // une correspondance de repli pour les sessions analysées avant cette version,
@@ -237,7 +249,11 @@ export default function DashboardPage() {
         <div className="dashboard-stats grid grid-cols-2 md:grid-cols-4">
           <StatCard title="Lignes" value={overview.n_lignes?.toLocaleString() ?? 0} icon={Rows3} />
           <StatCard title="Colonnes" value={overview.n_colonnes?.toLocaleString() ?? 0} icon={Columns3} />
-          <StatCard title="Valeurs manquantes" value={`${overview.pct_valeurs_manquantes_total ?? 0}%`} icon={AlertTriangle} />
+          <StatCard
+            title="Lignes incomplètes"
+            value={`${missing_insight?.pct_lignes_affectees ?? 0}%`}
+            icon={AlertTriangle}
+          />
           <StatCard title="Doublons" value={overview.n_doublons?.toLocaleString() ?? 0} icon={Copy} />
         </div>
 
@@ -308,6 +324,34 @@ export default function DashboardPage() {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="mb-5 grid grid-cols-1 sm:grid-cols-2 gap-3" role="status">
+              <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50 dark:bg-emerald-950/20 px-4 py-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">
+                  Observations valides
+                </div>
+                <div className="mt-1 text-xl font-bold">{selectedValid.toLocaleString("fr-FR")}</div>
+                <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">Utilisées pour la distribution affichée.</p>
+              </div>
+              <div className={`rounded-xl border px-4 py-3 ${selectedMissing > 0
+                ? "border-orange-200 dark:border-orange-900/60 bg-orange-50 dark:bg-orange-950/20"
+                : "border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#202020]"}`}>
+                <div className={`text-xs font-semibold uppercase tracking-wide ${selectedMissing > 0
+                  ? "text-orange-700 dark:text-orange-400"
+                  : "text-gray-500 dark:text-gray-400"}`}>
+                  Valeurs manquantes
+                </div>
+                <div className="mt-1 text-xl font-bold">
+                  {selectedMissing.toLocaleString("fr-FR")}
+                  <span className="ml-2 text-sm font-medium text-gray-500">
+                    ({selectedVarInfo?.pct_manquantes ?? 0}%)
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                  Exclues du graphique, jamais comptées comme observations.
+                </p>
+              </div>
             </div>
 
             <div className="dashboard-chart-canvas flex-1 w-full">
