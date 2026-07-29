@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import type { CSSProperties, JSX, ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import TextType from "./TextType";
 import ChatSettingsModal from "./ChatSettingsModal";
 import ChatMoreMenu from "./ChatMoreMenu";
@@ -9,15 +10,16 @@ import { ImageZoom, Image } from "./ImageZoom";
 import Modal from "./Modal";
 import { PlaceholdersAndVanishInput } from "./PlaceholdersAndVanishInput";
 import WelcomePanel from "./WelcomePanel";
+import SaliMark, { SaliLoadingMark } from "./SaliMark";
 import { API_URL } from "@/lib/api";
+import { readUserPreferences, USER_PREFERENCES_EVENT } from "@/lib/user-preferences";
 import {
   FileText, MoreVertical, Settings2,
-  Brain, Search, BookOpen, Code2, Play, Lightbulb, PenLine, Sparkles,
+  Search, BookOpen, Code2, Play, Lightbulb, PenLine, Sparkles,
 } from "lucide-react";
 
 // Icône associée à chaque phase annoncée par le backend (champ `phase`).
-const STEP_ICONS: Record<string, typeof Brain> = {
-  thinking: Brain,
+const STEP_ICONS: Record<string, typeof Search> = {
   searching: Search,
   reading: BookOpen,
   coding: Code2,
@@ -379,6 +381,9 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
     latestInput.current = input;
   }, [input]);
   const [loading, setLoading] = useState(false);
+  const [textAnimationsEnabled, setTextAnimationsEnabled] = useState(
+    () => readUserPreferences().textAnimations,
+  );
   // Étape en cours annoncée par le backend, affichée à la place des trois points.
   const [activeStep, setActiveStep] = useState<{ phase: string; message: string } | null>(null);
   const [typingDone, setTypingDone] = useState<Set<number>>(new Set());
@@ -398,6 +403,18 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const updatePreferences = () => {
+      setTextAnimationsEnabled(readUserPreferences().textAnimations);
+    };
+    window.addEventListener(USER_PREFERENCES_EVENT, updatePreferences);
+    window.addEventListener("storage", updatePreferences);
+    return () => {
+      window.removeEventListener(USER_PREFERENCES_EVENT, updatePreferences);
+      window.removeEventListener("storage", updatePreferences);
+    };
+  }, []);
 
   const clearChat = () => {
     setMessages([]);
@@ -771,34 +788,39 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           {messages.map((msg, i) => (
             <div key={i} style={{
               display: "flex",
+              flexDirection: "row",
+              alignItems: "flex-start",
               justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
+              width: msg.role === "assistant" ? "90%" : "100%",
               marginBottom: "24px",
               animation: "msgFadeIn 0.25s ease-out both",
             }}>
               {msg.role === "assistant" && (
                 <div style={{
-                  width: "30px", height: "30px", borderRadius: "50%",
-                  background: "linear-gradient(135deg,#8ab4f8,#a78bfa)",
                   display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: "13px", flexShrink: 0, marginRight: "10px", marginTop: "4px",
-                  boxShadow: "0 2px 10px rgba(138,180,248,0.3)",
-                }}></div>
+                  flexShrink: 0, order: 0, marginRight: "10px", marginTop: "4px",
+                }}><SaliMark size={30} /></div>
               )}
               <div style={{
-                maxWidth: "75%",
+                maxWidth: msg.role === "user" ? "75%" : "none",
+                width: "auto",
+                minWidth: 0,
+                flex: msg.role === "assistant" ? 1 : undefined,
+                order: 1,
                 fontSize: "14px",
                 lineHeight: 1.75,
+                textAlign: msg.role === "assistant" ? "justify" : "left",
                 color: "var(--text-main)",
-                padding: "13px 17px",
-                borderRadius: msg.role === "user" ? "20px 4px 20px 20px" : "4px 20px 20px 20px",
+                padding: msg.role === "user" ? "13px 17px" : "4px 0",
+                borderRadius: msg.role === "user" ? "20px 4px 20px 20px" : 0,
                 background: msg.role === "user"
                   ? "linear-gradient(135deg, rgba(138,180,248,0.18), rgba(167,139,250,0.12))"
-                  : "var(--bubble-ai)",
-                border: `1px solid ${msg.role === "user" ? "rgba(138,180,248,0.28)" : "var(--border-muted)"}`,
+                  : "transparent",
+                border: msg.role === "user" ? "1px solid rgba(138,180,248,0.28)" : "none",
                 boxShadow: msg.role === "user" ? "0 2px 12px rgba(138,180,248,0.1)" : "none",
               }}>
                 {msg.role === "assistant" ? (
-                  typingDone.has(i) ? (
+                  typingDone.has(i) || !textAnimationsEnabled ? (
                     // Typing terminé → rendu markdown
                     <div>
                       {renderMarkdown(msg.text, sendMessage, "content", msg.sources, setSelectedSource)}
@@ -929,17 +951,10 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           {loading && (
             <div style={{ display: "flex", marginBottom: "24px", animation: "msgFadeIn 0.25s ease-out both" }}>
               <div style={{
-                width: "30px", height: "30px", borderRadius: "50%",
-                background: "linear-gradient(135deg,#8ab4f8,#a78bfa)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 marginRight: "10px", flexShrink: 0,
-                boxShadow: "0 2px 10px rgba(138,180,248,0.3)",
-              }}></div>
+              }}><SaliLoadingMark size={30} /></div>
               <div style={{
-                padding: "14px 18px",
-                background: "var(--bubble-ai)",
-                border: "1px solid var(--border-muted)",
-                borderRadius: "4px 20px 20px 20px",
                 display: "flex", alignItems: "center", gap: "6px",
               }}>
                 <style>{`
@@ -955,29 +970,36 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                     width: 7px; height: 7px; border-radius: 50%;
                     animation: chat-dot-bounce 1.2s ease-in-out infinite;
                   }
-                  @keyframes chat-step-shimmer {
-                    0%   { background-position: 120% 0; }
-                    100% { background-position: -20% 0; }
-                  }
                   .chat-step-label {
+                    display: inline-block;
                     font-size: 13.5px; font-weight: 500; white-space: nowrap;
-                    background: linear-gradient(90deg,
-                      var(--text-muted) 0%, var(--text-muted) 35%,
-                      #a78bfa 50%,
-                      var(--text-muted) 65%, var(--text-muted) 100%);
-                    background-size: 220% 100%;
-                    -webkit-background-clip: text; background-clip: text;
-                    color: transparent;
-                    animation: chat-step-shimmer 2s linear infinite;
+                    color: var(--text-muted);
                   }
                 `}</style>
                 {activeStep ? (
                   <>
-                    {(() => {
+                    {activeStep.phase !== "thinking" && (() => {
                       const StepIcon = STEP_ICONS[activeStep.phase] ?? Sparkles;
                       return <StepIcon size={15} strokeWidth={1.9} style={{ color: "#a78bfa", flexShrink: 0 }} />;
                     })()}
-                    <span className="chat-step-label">{activeStep.message}</span>
+                    {textAnimationsEnabled ? (
+                      <span style={{ display: "inline-flex", overflow: "hidden", paddingBlock: "2px" }}>
+                        <AnimatePresence initial={false} mode="popLayout">
+                          <motion.span
+                            key={`${activeStep.phase}:${activeStep.message}`}
+                            className="chat-step-label"
+                            initial={{ opacity: 0, y: "100%" }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: "-100%" }}
+                            transition={{ duration: 0.3, ease: "easeInOut" }}
+                          >
+                            {activeStep.message}
+                          </motion.span>
+                        </AnimatePresence>
+                      </span>
+                    ) : (
+                      <span className="chat-step-label">{activeStep.message}</span>
+                    )}
                   </>
                 ) : (
                   <>

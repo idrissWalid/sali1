@@ -1,8 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import Image from "next/image";
-import { Moon, Plus, Settings2, Share2, Sun } from "lucide-react";
+import { Plus, Settings2, Share2 } from "lucide-react";
 import { Panel, Group, Separator } from "react-resizable-panels";
 import Sidebar from "./components/Sidebar";
 import SourcesPanel from "./components/SourcesPanel";
@@ -14,6 +13,8 @@ import ShareModal from "./components/ShareModal";
 import AvatarMenu from "./components/AvatarMenu";
 import Modal from "./components/Modal";
 import SourceHistoryDock from "./components/SourceHistoryDock";
+import SaliMark from "./components/SaliMark";
+import ThemeToggleButton from "./components/ThemeToggleButton";
 import { API_URL } from "@/lib/api";
 
 interface Source {
@@ -318,36 +319,20 @@ export default function Home() {
         zIndex: 10,
       }}>
 
-        {/* Gauche : logo SALI AI */}
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <div style={{
-            height: "40px",
-            borderRadius: "10px",
-            overflow: "hidden",
-            flexShrink: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "#ffffff",
-            padding: "4px 10px",
-            border: "1px solid rgba(138,180,248,0.2)",
-          }}>
-            <Image
-              src="/saliai-logo.jpeg"
-              alt="SALI AI"
-              width={120}
-              height={64}
-              priority
-              style={{ objectFit: "contain", height: "100%", width: "auto" }}
-            />
+        {/* Gauche : logo Sali AI */}
+        <div className="sali-brand" aria-label="Sali AI">
+          <div className="sali-brand__chip">
+            <SaliMark size={32} color="var(--sali-header-mark)" />
           </div>
+          <span className="sali-brand__name">Sali AI</span>
         </div>
 
         {/* Droite : boutons */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
 
           {/* Theme Toggle */}
-          <button
+          <ThemeToggleButton
+            isDark={theme === "dark"}
             onClick={(e) => {
               const x = e.clientX;
               const y = e.clientY;
@@ -372,22 +357,7 @@ export default function Home() {
                 setTheme(newTheme);
               });
             }}
-            style={{
-              width: "34px", height: "34px",
-              borderRadius: "50%",
-              border: "1px solid var(--border-color)",
-              background: "transparent",
-              color: "var(--text-muted)",
-              cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: "16px",
-              transition: "background 0.2s, color 0.2s, transform 0.2s",
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = "var(--bubble-ai)"; e.currentTarget.style.transform = "rotate(20deg) scale(1.05)"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.transform = "none"; }}
-          >
-            {theme === "dark" ? <Sun size={17} strokeWidth={1.8} /> : <Moon size={17} strokeWidth={1.8} />}
-          </button>
+          />
 
           <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
             {[

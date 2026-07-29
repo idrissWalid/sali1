@@ -5,7 +5,7 @@ import { toggleTheme, useTheme } from "@/hooks/use-theme";
 import { API_URL } from "@/lib/api";
 import {
   ArrowLeft, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Sun, Moon,
-  Target, Gauge, Trophy, Timer, ListChecks, FlaskConical, BarChart3, Download, Loader2,
+  Target, Gauge, Trophy, Timer, FlaskConical, BarChart3, Download, Loader2,
 } from "lucide-react";
 import {
   Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
@@ -100,7 +100,7 @@ const STATUTS: Record<string, { label: string; cls: string; Icon: typeof CheckCi
     Icon: CheckCircle2,
   },
   HYPOTHESES_VIOLEES: {
-    label: "Hypothèses violées",
+    label: "À améliorer",
     cls: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-800",
     Icon: AlertTriangle,
   },
@@ -131,8 +131,42 @@ function Card({ title, extra, children, delay }: { title: React.ReactNode; extra
   );
 }
 
+function InlineMarkdown({ texte }: { texte: string }) {
+  const morceaux = texte.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g);
+  return morceaux.map((morceau, i) => {
+    if (morceau.startsWith("**") && morceau.endsWith("**")) return <strong key={i}>{morceau.slice(2, -2)}</strong>;
+    if (morceau.startsWith("`") && morceau.endsWith("`")) return <code key={i}>{morceau.slice(1, -1)}</code>;
+    if (morceau.startsWith("*") && morceau.endsWith("*")) return <em key={i}>{morceau.slice(1, -1)}</em>;
+    return morceau;
+  });
+}
+
 function Prose({ texte }: { texte: string }) {
-  return <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-300">{texte}</p>;
+  const lignes = texte.replace(/\r/g, "").split("\n");
+  const elements: React.ReactNode[] = [];
+  let liste: string[] = [];
+  const viderListe = () => {
+    if (liste.length === 0) return;
+    elements.push(<ul key={`list-${elements.length}`}>{liste.map((item, i) => <li key={i}><InlineMarkdown texte={item} /></li>)}</ul>);
+    liste = [];
+  };
+
+  lignes.forEach((ligne) => {
+    const contenu = ligne.trim();
+    const item = contenu.match(/^[-*]\s+(.+)/);
+    if (item) { liste.push(item[1]); return; }
+    viderListe();
+    if (!contenu) return;
+    const titre = contenu.match(/^(#{1,3})\s+(.+)/);
+    if (titre) {
+      const Tag = titre[1].length === 1 ? "h2" : "h3";
+      elements.push(<Tag key={elements.length}><InlineMarkdown texte={titre[2]} /></Tag>);
+    } else {
+      elements.push(<p key={elements.length}><InlineMarkdown texte={contenu} /></p>);
+    }
+  });
+  viderListe();
+  return <div className="sv-markdown">{elements}</div>;
 }
 
 function Row({ k, v, accent }: { k: string; v: React.ReactNode; accent?: string }) {
@@ -187,6 +221,83 @@ function Barres({ valeurs, signe }: { valeurs: Record<string, number | null>; si
         );
       })}
     </div>
+  );
+}
+
+function MatriceConfusion({ matrice, classes, delay }: { matrice: number[][]; classes?: string[] | null; delay: number }) {
+  const valeurs = matrice.flat();
+  const maximum = Math.max(...valeurs, 1);
+  const total = valeurs.reduce((somme, valeur) => somme + valeur, 0);
+  const correctes = matrice.reduce((somme, ligne, i) => somme + (ligne[i] ?? 0), 0);
+  const erreurs = total - correctes;
+  const taux = total > 0 ? (correctes / total) * 100 : 0;
+  const labels = Array.from(
+    { length: Math.max(matrice.length, ...matrice.map((ligne) => ligne.length)) },
+    (_, i) => classes?.[i] ?? String(i),
+  );
+
+  return (
+    <Card
+      title="Matrice de confusion"
+      delay={delay}
+      extra={<span className="text-xs text-gray-400">Lignes : réel · Colonnes : prédit</span>}
+    >
+      <div className="confusion-layout">
+        <div className="confusion-summary">
+          <div className="confusion-kpi">
+            <span>Bonnes prédictions</span>
+            <strong className="text-emerald-600 dark:text-emerald-400">{correctes.toLocaleString("fr-FR")}</strong>
+          </div>
+          <div className="confusion-kpi">
+            <span>Erreurs</span>
+            <strong className="text-rose-600 dark:text-rose-400">{erreurs.toLocaleString("fr-FR")}</strong>
+          </div>
+          <div className="confusion-kpi">
+            <span>Taux correct</span>
+            <strong>{taux.toLocaleString("fr-FR", { maximumFractionDigits: 1 })} %</strong>
+          </div>
+        </div>
+
+        <div className="sv-scroll overflow-x-auto pb-2">
+          <div className="confusion-matrix" style={{ minWidth: `${Math.max(420, labels.length * 88 + 150)}px` }}>
+            <div className="confusion-axis-title" style={{ gridColumn: `2 / span ${labels.length}` }}>Classe prédite</div>
+            <div />
+            {labels.map((label, j) => (
+              <div key={`prediction-${j}`} className="confusion-column-label" title={label}>{label}</div>
+            ))}
+            {matrice.map((ligne, i) => (
+              <React.Fragment key={`actual-${i}`}>
+                <div className="confusion-row-label" title={labels[i]}>
+                  <span>Réel</span>{labels[i]}
+                </div>
+                {labels.map((_, j) => {
+                  const valeur = ligne[j] ?? 0;
+                  const intensite = valeur / maximum;
+                  const correcte = i === j;
+                  return (
+                    <div
+                      key={`${i}-${j}`}
+                      className={`confusion-cell ${correcte ? "confusion-cell--correct" : "confusion-cell--error"}`}
+                      style={{ "--cell-intensity": Math.max(0.08, intensite) } as React.CSSProperties}
+                      title={`${labels[i]} réel, ${labels[j]} prédit : ${valeur}`}
+                    >
+                      <strong>{valeur.toLocaleString("fr-FR")}</strong>
+                      <span>{total > 0 ? `${((valeur / total) * 100).toFixed(1)} %` : "0 %"}</span>
+                    </div>
+                  );
+                })}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+
+        <div className="confusion-legend">
+          <span><i className="bg-emerald-500" /> Bonne classification</span>
+          <span><i className="bg-rose-500" /> Confusion entre classes</span>
+          <span className="text-gray-400">Une couleur plus intense représente plus d’observations.</span>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -338,7 +449,7 @@ function Simulation({ modelId, artefact, estRegression, cible, delay }: {
     }
   };
 
-  const champ = "w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#222] px-3 py-2 text-sm";
+  const champ = "w-full min-h-12 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#181818] px-4 py-3 text-sm leading-6 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/15";
 
   return (
     <Card title={<span className="flex items-center gap-2"><FlaskConical size={14} /> Simulation</span>} delay={delay}>
@@ -346,10 +457,10 @@ function Simulation({ modelId, artefact, estRegression, cible, delay }: {
         Renseignez un profil : le modèle prédit {estRegression ? <>la valeur de <strong>{cible}</strong></> : <>la classe de <strong>{cible}</strong></>}.
       </p>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="simulation-fields">
         {numeriques.map((c) => (
-          <label key={c} className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">{c}</span>
+          <label key={c} className="simulation-field">
+            <span>{c}</span>
             <input
               type="number" className={champ} value={valeurs[c] ?? ""}
               onChange={(e) => setValeurs((v) => ({ ...v, [c]: e.target.value }))}
@@ -362,8 +473,8 @@ function Simulation({ modelId, artefact, estRegression, cible, delay }: {
           </label>
         ))}
         {categorielles.map((c) => (
-          <label key={c} className="flex flex-col gap-1.5">
-            <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">{c}</span>
+          <label key={c} className="simulation-field">
+            <span>{c}</span>
             <select
               className={champ} value={valeurs[c] ?? ""}
               onChange={(e) => setValeurs((v) => ({ ...v, [c]: e.target.value }))}
@@ -418,6 +529,10 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
   const retenu: Candidat = r.modele_retenu ?? { modele: "", libelle: "—" };
   const perf = retenu.performances || {};
   const estRegression = r.famille === "regression";
+  const performancePrincipale = estRegression ? perf.r2_test : perf.accuracy_test;
+  const performanceAffichee = typeof performancePrincipale === "number"
+    ? `${(performancePrincipale * 100).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} %`
+    : "—";
 
   const statut = STATUTS[r.statut_final ?? ""] ?? {
     label: r.statut_final ?? "Inconnu",
@@ -425,7 +540,6 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
     Icon: MinusCircle,
   };
   const StatutIcon = statut.Icon;
-  const vif = (retenu.hypotheses?.vif ?? {}) as Record<string, number | null>;
   const artefact = r.artefact ?? {};
   const [onglet, setOnglet] = useState<"rapport" | "simulation">("rapport");
 
@@ -444,6 +558,57 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
         .dashboard-stats { gap: 16px; }
         .dashboard-panel { padding: 24px; }
         .dashboard-stat { min-height: 104px; padding: 20px; }
+        .performance-hero { min-height: 190px; display: flex; align-items: center; justify-content: space-between; overflow: hidden; padding: clamp(28px, 4vw, 52px); border: 1px solid rgba(59,130,246,.22); border-radius: 24px; color: white; background: linear-gradient(125deg,#0f55d8 0%,#2563eb 52%,#7c3aed 120%); box-shadow: 0 18px 48px rgba(37,99,235,.18); }
+        .performance-hero__eyebrow { display: block; margin-bottom: 8px; font-size: 12px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; opacity: .78; }
+        .performance-hero strong { display: block; font-size: clamp(54px,8vw,92px); line-height: .95; letter-spacing: -.06em; }
+        .performance-hero p { margin-top: 14px; font-size: 14px; opacity: .82; }
+        .performance-hero > svg { width: clamp(80px,12vw,150px); height: auto; opacity: .18; stroke-width: 1.2; }
+        .sv-markdown { display: grid; gap: 12px; color: #4b5563; font-size: 14px; line-height: 1.75; }
+        [data-theme="dark"] .sv-markdown { color: #d1d5db; }
+        .sv-markdown h2 { margin-top: 8px; color: inherit; font-size: 19px; font-weight: 750; }
+        .sv-markdown h3 { margin-top: 6px; color: inherit; font-size: 16px; font-weight: 700; }
+        .sv-markdown ul { display: grid; gap: 7px; padding-left: 20px; list-style: disc; }
+        .sv-markdown code { padding: 2px 6px; border-radius: 5px; background: rgba(127,127,127,.12); font-family: monospace; font-size: .9em; }
+        .simulation-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,280px),1fr)); gap: 20px; }
+        .simulation-field { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+        .simulation-field > span:first-child { overflow-wrap: anywhere; color: #4b5563; font-size: 13px; font-weight: 650; line-height: 1.45; }
+        [data-theme="dark"] .simulation-field > span:first-child { color: #d1d5db; }
+        .confusion-layout { display: grid; gap: 20px; }
+        .confusion-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+        .confusion-kpi { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 12px; background: color-mix(in srgb,currentColor 4%,transparent); border: 1px solid color-mix(in srgb,currentColor 9%,transparent); }
+        .confusion-kpi span { color: #6b7280; font-size: 12px; font-weight: 600; }
+        .confusion-kpi strong { font-size: 22px; line-height: 1.2; }
+        .confusion-matrix { display: grid; grid-template-columns: minmax(110px, 1.35fr) repeat(${Math.max(retenu.confusion_matrix?.[0]?.length ?? 0, 1)}, minmax(72px, 1fr)); gap: 6px; align-items: stretch; }
+        .confusion-axis-title { padding: 2px 8px 6px; text-align: center; color: #6b7280; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+        .confusion-column-label, .confusion-row-label { min-width: 0; color: #4b5563; font-size: 12px; font-weight: 650; }
+        [data-theme="dark"] .confusion-column-label, [data-theme="dark"] .confusion-row-label { color: #d1d5db; }
+        .confusion-column-label { padding: 6px; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .confusion-row-label { display: flex; flex-direction: column; justify-content: center; padding: 8px 12px; overflow: hidden; text-overflow: ellipsis; }
+        .confusion-row-label span { color: #9ca3af; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+        .confusion-cell { min-height: 76px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border-radius: 12px; border: 1px solid transparent; }
+        .confusion-cell strong { font-size: 18px; line-height: 1.2; }
+        .confusion-cell span { font-size: 10px; opacity: .7; }
+        .confusion-cell--correct { color: rgb(4 120 87); background: rgba(16,185,129,var(--cell-intensity)); border-color: rgba(16,185,129,.2); }
+        .confusion-cell--error { color: rgb(190 24 93); background: rgba(244,63,94,var(--cell-intensity)); border-color: rgba(244,63,94,.16); }
+        [data-theme="dark"] .confusion-cell--correct { color: rgb(167 243 208); }
+        [data-theme="dark"] .confusion-cell--error { color: rgb(254 205 211); }
+        .confusion-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; font-size: 11px; color: #6b7280; }
+        .confusion-legend span { display: inline-flex; align-items: center; gap: 7px; }
+        .confusion-legend i { width: 9px; height: 9px; border-radius: 3px; }
+        @media (max-width: 640px) {
+          .dashboard-shell { padding: 20px 14px 32px; }
+          .dashboard-container { gap: 16px; }
+          .dashboard-header { align-items: flex-start; flex-direction: column; gap: 16px; }
+          .dashboard-header > div:last-child { width: 100%; flex-wrap: wrap; }
+          .dashboard-stats { gap: 10px; }
+          .dashboard-panel { padding: 18px; }
+          .dashboard-stat { padding: 16px; }
+          .confusion-summary { grid-template-columns: 1fr; gap: 8px; }
+          .confusion-kpi { flex-direction: row; align-items: center; justify-content: space-between; }
+          .confusion-kpi strong { font-size: 18px; }
+          .performance-hero { min-height: 160px; }
+          .performance-hero > svg { display: none; }
+        }
       `}</style>
 
       <div className="dashboard-container">
@@ -484,8 +649,17 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
           </div>
         </div>
 
+        <div className="performance-hero sv-card">
+          <div>
+            <span className="performance-hero__eyebrow">Performance du modèle</span>
+            <strong>{performanceAffichee}</strong>
+            <p>{estRegression ? "Score R² sur les données de test" : "Prédictions correctes sur les données de test"}</p>
+          </div>
+          <Gauge aria-hidden="true" />
+        </div>
+
         {/* Global Stats Overview */}
-        <div className="dashboard-stats grid grid-cols-2 md:grid-cols-4">
+        <div className="dashboard-stats grid grid-cols-1 sm:grid-cols-3">
           <StatTile icon={Trophy} label="Modèle retenu" value={retenu.libelle ?? "—"} delay={0} />
           <StatTile
             icon={Gauge}
@@ -493,13 +667,6 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
             value={<span className={QUALITES[r.qualite ?? ""] ?? ""}>{r.qualite ?? "—"}</span>}
             accent="text-violet-500 bg-violet-50 dark:bg-violet-500/10"
             delay={60}
-          />
-          <StatTile
-            icon={Target}
-            label={estRegression ? "R² (test)" : "MCC (test)"}
-            value={fr(estRegression ? perf.r2_test : perf.mcc)}
-            accent="text-emerald-500 bg-emerald-50 dark:bg-emerald-500/10"
-            delay={120}
           />
           <StatTile
             icon={Timer}
@@ -540,18 +707,6 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
           <Card title="Interprétation" delay={200}>
             <Prose texte={r.interpretation} />
           </Card>
-        )}
-
-        {/* Verdict : ce qui a bloqué, ou pourquoi c'est bon */}
-        {(r.violations?.length ?? 0) > 0 && (
-          <div className="sv-card rounded-2xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 p-6" style={{ animationDelay: "220ms" }}>
-            <h3 className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-red-700 dark:text-red-400">
-              <XCircle size={15} /> Normes non respectées
-            </h3>
-            <ul className="list-disc list-inside space-y-1.5 text-sm text-red-800 dark:text-red-200/80">
-              {r.violations!.map((v, i) => <li key={i}>{v}</li>)}
-            </ul>
-          </div>
         )}
 
         {/* Le tournoi : tous les candidats, pas seulement le vainqueur */}
@@ -614,43 +769,7 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
           )}
         </Card>
 
-        {/* Hypothèses vérifiées + performances */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card title={<span className="flex items-center gap-2"><ListChecks size={14} /> Hypothèses vérifiées</span>} delay={300}>
-            {estRegression ? (
-              <>
-                <Row k="Normalité des résidus (p)" v={fr(retenu.hypotheses?.normalite_p as number)} accent="text-gray-500 dark:text-gray-400" />
-                <Row k="Homoscédasticité — Breusch-Pagan (p)" v={fr(retenu.hypotheses?.breusch_pagan_p as number)} />
-                <Row k="Homoscédasticité — White (p)" v={fr(retenu.hypotheses?.white_p as number)} />
-                <Row k="Indépendance — Durbin-Watson" v={fr(retenu.hypotheses?.durbin_watson as number, 2)} />
-                <Row k="Linéarité — RESET (p)" v={fr(retenu.hypotheses?.reset_p as number)} />
-                <Row k="Points influents (Cook)" v={String(retenu.hypotheses?.n_points_influents ?? "—")} />
-              </>
-            ) : (
-              <>
-                <Row k="Événements par variable (EPV)" v={fr(retenu.hypotheses?.epv as number, 1)} />
-                <Row k="Séparation complète" v={retenu.hypotheses?.separation_complete ? "oui" : "non"} />
-                <Row k="Seuil de décision" v={fr(retenu.seuil_decision, 3)} />
-                {r.ratio_minoritaire != null && (
-                  <Row k="Part de la classe minoritaire" v={`${fr(r.ratio_minoritaire * 100, 1)} %`} />
-                )}
-              </>
-            )}
-            {Object.keys(vif).length > 0 && (
-              <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-800">
-                <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">VIF (multicolinéarité)</div>
-                {Object.entries(vif).slice(0, 8).map(([k, v]) => (
-                  <Row
-                    key={k}
-                    k={k}
-                    v={fr(v, 2)}
-                    accent={(v ?? 0) > 10 ? "text-red-500" : (v ?? 0) > 5 ? "text-amber-500" : undefined}
-                  />
-                ))}
-              </div>
-            )}
-          </Card>
-
+        <div>
           <Card title="Performances (jeu de test)" delay={340}>
             {estRegression ? (
               <>
@@ -676,6 +795,11 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
             </div>
           </Card>
         </div>
+
+        {/* Diagnostic principal d'une classification, placé immédiatement après les performances. */}
+        {retenu.confusion_matrix && retenu.confusion_matrix.length > 0 && (
+          <MatriceConfusion matrice={retenu.confusion_matrix} classes={r.classes} delay={370} />
+        )}
 
         {/* Poids des variables */}
         {(retenu.coefficients || retenu.importances || retenu.odds_ratios) && (
@@ -721,41 +845,6 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
               />
             )}
           </div>
-        )}
-
-        {/* Matrice de confusion */}
-        {retenu.confusion_matrix && (
-          <Card title="Matrice de confusion" delay={420}>
-            <div className="sv-scroll overflow-x-auto">
-              <table className="border-collapse text-sm">
-                <tbody>
-                  {retenu.confusion_matrix.map((ligne, i) => (
-                    <tr key={i}>
-                      <td className="px-3 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                        réel {r.classes?.[i] ?? i}
-                      </td>
-                      {ligne.map((v, j) => (
-                        <td
-                          key={j}
-                          className={`px-5 py-2 text-center font-mono ${i === j ? "bg-green-50 font-semibold text-green-700 dark:bg-green-900/20 dark:text-green-400" : "bg-gray-50 dark:bg-gray-800/40"}`}
-                        >
-                          {v}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                  <tr>
-                    <td />
-                    {(retenu.confusion_matrix[0] ?? []).map((_, j) => (
-                      <td key={j} className="px-5 pt-1 text-center text-xs text-gray-400">
-                        prédit {r.classes?.[j] ?? j}
-                      </td>
-                    ))}
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </Card>
         )}
 
         {/* Avertissements informatifs */}

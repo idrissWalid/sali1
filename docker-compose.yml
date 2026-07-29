@@ -50,25 +50,6 @@ services:
         reservations:
           memory: 512M
 
-  frontend-claude:
-    build:
-      context: ./fr_claude
-      dockerfile: Dockerfile
-      args:
-        - NEXT_PUBLIC_API_URL=http://localhost:8000
-    ports:
-      - "3001:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-    depends_on:
-      - backend
-    deploy:
-      resources:
-        limits:
-          memory: 1G
-        reservations:
-          memory: 512M
-
   sandbox-builder:
     # A dummy service to build the sandbox image during compose up
     build:

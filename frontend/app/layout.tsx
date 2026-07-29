@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Geist, Google_Sans, Roboto, Roboto_Mono } from "next/font/google";
+import { Caprasimo, Figtree, Google_Sans, Roboto, Roboto_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
 import NgrokFetchPatch from "./components/NgrokFetchPatch";
+import PreferencesBootstrap from "./components/PreferencesBootstrap";
 
 // Chargées via next/font plutôt que par un <link> vers fonts.googleapis.com :
 // les fichiers sont auto-hébergés (aucune requête vers Google au runtime, donc
 // pas de fuite d'IP visiteur) et le rendu ne subit pas de décalage de mise en
 // page. Un <link> dans un composant déclenchait `@next/next/no-page-custom-font`.
-const geist = Geist({ subsets: ["latin"], variable: "--font-sans" });
+const figtree = Figtree({ subsets: ["latin"], variable: "--font-figtree" });
+const caprasimo = Caprasimo({ subsets: ["latin"], weight: "400", variable: "--font-brand" });
 const googleSans = Google_Sans({
   subsets: ["latin"],
   weight: ["400", "500", "600"],
@@ -27,8 +29,12 @@ const roboto = Roboto({
 const robotoMono = Roboto_Mono({ subsets: ["latin"], variable: "--font-roboto-mono" });
 
 export const metadata: Metadata = {
-  title: "SALI AI",
-  description: "SALI AI — From raw data to published insights",
+  title: "Sali AI",
+  description: "Sali AI — From raw data to published insights",
+  icons: {
+    icon: [{ url: "/brand/sali-favicon.svg", type: "image/svg+xml" }],
+    apple: "/brand/sali-app-icon.svg",
+  },
 };
 
 export default function RootLayout({
@@ -41,7 +47,8 @@ export default function RootLayout({
       lang="fr"
       className={cn(
         "font-sans",
-        geist.variable,
+        figtree.variable,
+        caprasimo.variable,
         googleSans.variable,
         roboto.variable,
         robotoMono.variable,
@@ -52,10 +59,11 @@ export default function RootLayout({
         style={{
           background: "#131314",
           color: "#e3e3e3",
-          fontFamily: "var(--font-roboto), sans-serif",
+          fontFamily: "var(--font-figtree), sans-serif",
         }}
       >
         <NgrokFetchPatch />
+        <PreferencesBootstrap />
         {children}
       </body>
     </html>

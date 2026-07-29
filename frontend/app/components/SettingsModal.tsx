@@ -7,6 +7,12 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import StatefulSaveButton from "./StatefulSaveButton";
+import {
+  DEFAULT_USER_PREFERENCES,
+  readUserPreferences,
+  saveUserPreferences,
+  type InterfaceLanguage,
+} from "@/lib/user-preferences";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -18,7 +24,7 @@ interface SettingsModalProps {
   onModelsRefetch?: () => void;
 }
 
-type TabType = "general" | "model" | "rag";
+type TabType = "general" | "model";
 
 export default function SettingsModal({
   isOpen,
@@ -32,13 +38,8 @@ export default function SettingsModal({
   const [activeTab, setActiveTab] = useState<TabType>("general");
 
   // Settings states
-  const [lang, setLang] = useState("fr");
+  const [lang, setLang] = useState<InterfaceLanguage>(DEFAULT_USER_PREFERENCES.language);
   const [aiModel, setAiModel] = useState(selectedModel || "");
-  const [temperature, setTemperature] = useState(0.2);
-  const [maxTokens, setMaxTokens] = useState(2048);
-  const [chunkSize, setChunkSize] = useState(500);
-  const [chunkOverlap, setChunkOverlap] = useState(50);
-  const [autoSpeech, setAutoSpeech] = useState(false);
   const [textAnimations, setTextAnimations] = useState(true);
   const [showToast, setShowToast] = useState(false);
 
@@ -50,6 +51,16 @@ export default function SettingsModal({
   const [apiSaving, setApiSaving] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const timeout = window.setTimeout(() => {
+      const preferences = readUserPreferences();
+      setLang(preferences.language);
+      setTextAnimations(preferences.textAnimations);
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [isOpen]);
 
   // Charge la liste des fournisseurs et de leurs modèles disponibles dès
   // l'ouverture de la boîte de dialogue "Configuration API".
@@ -77,20 +88,15 @@ export default function SettingsModal({
     setApiModelName(modelesDuFournisseur[0]);
   }
 
-  const clearCache = () => {
-    alert("Base de données vectorielle et cache vidés avec succès !");
-  };
-
   const tabs: { id: TabType; label: string; description: string }[] = [
     { id: "general", label: "Général", description: "Expérience" },
     { id: "model", label: "Modèle IA", description: "Intelligence" },
-    { id: "rag", label: "RAG & Données", description: "Indexation" },
   ];
 
   const tabIcon = (tab: TabType) => {
     if (tab === "general") return <svg viewBox="0 0 24 24" fill="none"><path d="M12 15.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Z" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06-2.1 2.1-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51v.09h-3v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06-2.1-2.1.06-.06A1.65 1.65 0 0 0 7.22 15a1.65 1.65 0 0 0-1.51-1H5.6v-3h.11a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06 2.1-2.1.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1-1.51V4.8h3v.1a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06 2.1 2.1-.06.06A1.65 1.65 0 0 0 19.4 10a1.65 1.65 0 0 0 1.51 1H21v3h-.09a1.65 1.65 0 0 0-1.51 1Z" /></svg>;
     if (tab === "model") return <svg viewBox="0 0 24 24" fill="none"><path d="M12 3.75c-4.28 0-7.75 2.97-7.75 6.63 0 2.17 1.22 4.1 3.1 5.3v3.57l3.16-1.82c.49.08.99.12 1.49.12 4.28 0 7.75-2.97 7.75-6.63S16.28 3.75 12 3.75Z" /><path d="M9 10.7h.01M12 10.7h.01M15 10.7h.01" strokeLinecap="round" strokeWidth="2.5" /></svg>;
-    return <svg viewBox="0 0 24 24" fill="none"><path d="M4 19.25V6.5A2.5 2.5 0 0 1 6.5 4H17.5A2.5 2.5 0 0 1 20 6.5v12.75" /><path d="M2.75 19.25h18.5M8.25 8.25h7.5M8.25 11.5h7.5" strokeLinecap="round" /></svg>;
+    return null;
   };
 
   return (
@@ -103,11 +109,7 @@ export default function SettingsModal({
           100% { opacity: 0; transform: translate(-50%, 20px) scale(0.95); }
         }
       `}</style>
-      <Modal isOpen={isOpen} onClose={onClose} title="Préférences" maxWidth="840px">
-      <div className="settings-intro">
-        <span className="settings-intro__eyebrow">ESPACE DE TRAVAIL</span>
-        <p>Personnalisez votre environnement d’analyse sans ajouter de complexité.</p>
-      </div>
+      <Modal isOpen={isOpen} onClose={onClose} title="Préférences" maxWidth="720px">
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Sections des préférences">
           {tabs.map((tab) => {
@@ -135,7 +137,7 @@ export default function SettingsModal({
                 <label>Langue de l’interface</label>
                 <select
                   value={lang}
-                  onChange={(e) => setLang(e.target.value)}
+                  onChange={(e) => setLang(e.target.value as InterfaceLanguage)}
                   className="settings-select"
                 >
                   <option value="fr">Français</option>
@@ -144,23 +146,20 @@ export default function SettingsModal({
               </div>
 
               <div className="settings-toggle-row">
-                <div><strong>Lecture vocale automatique</strong><span>Lire le résumé à haute voix après chargement</span></div>
-                <input
-                  type="checkbox"
-                  checked={autoSpeech}
-                  onChange={(e) => setAutoSpeech(e.target.checked)}
+                <div><strong>Animations textuelles</strong><span>Activer les effets de frappe dans le chat</span></div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={textAnimations}
+                  aria-label="Animations textuelles"
                   className="settings-switch"
-                />
+                  onClick={() => setTextAnimations((enabled) => !enabled)}
+                ><span /></button>
               </div>
 
-              <div className="settings-toggle-row">
-                <div><strong>Animations textuelles</strong><span>Activer les effets de frappe dans le chat</span></div>
-                <input
-                  type="checkbox"
-                  checked={textAnimations}
-                  onChange={(e) => setTextAnimations(e.target.checked)}
-                  className="settings-switch"
-                />
+              <div className="settings-toggle-row settings-toggle-row--disabled">
+                <div><strong>Lecture vocale automatique</strong><span>Cette option sera disponible prochainement.</span></div>
+                <span className="settings-coming-soon">Bientôt</span>
               </div>
             </div>
           )}
@@ -168,7 +167,7 @@ export default function SettingsModal({
           {/* MODEL TAB */}
           {activeTab === "model" && (
             <div className="settings-section">
-              <div className="settings-section__heading"><h3>Modèle de langage</h3><p>Choisissez la source et le comportement de l’assistant.</p></div>
+              <div className="settings-section__heading"><h3>Modèle de langage</h3><p>Choisissez la source et le modèle utilisé par Sali AI.</p></div>
               
               <div className="settings-field">
                 <label>Source du modèle</label>
@@ -228,77 +227,6 @@ export default function SettingsModal({
                 </div>
               )}
 
-              <div className="settings-range">
-                <div><label>Température</label><span>{temperature.toFixed(1)}</span></div>
-                <small>Plus bas = plus factuel</small>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={temperature}
-                  onChange={(e) => setTemperature(parseFloat(e.target.value))}
-                  className="settings-range__input"
-                />
-              </div>
-
-              <div className="settings-range">
-                <div><label>Limite de jetons</label><span>{maxTokens}</span></div>
-                <small>Réponse maximale autorisée par requête.</small>
-                <input
-                  type="range"
-                  min="256"
-                  max="4096"
-                  step="256"
-                  value={maxTokens}
-                  onChange={(e) => setMaxTokens(parseInt(e.target.value))}
-                  className="settings-range__input"
-                />
-              </div>
-            </div>
-          )}
-
-          {/* RAG TAB */}
-          {activeTab === "rag" && (
-            <div className="settings-section">
-              <div className="settings-section__heading"><h3>Contexte & indexation</h3><p>Réglez la façon dont vos documents sont découpés.</p></div>
-              <div className="settings-range">
-                <div><label>Taille des blocs RAG</label><span>{chunkSize} mots</span></div>
-                <small>Un bon équilibre entre précision et contexte.</small>
-                <input
-                  type="range"
-                  min="200"
-                  max="1500"
-                  step="50"
-                  value={chunkSize}
-                  onChange={(e) => setChunkSize(parseInt(e.target.value))}
-                  className="settings-range__input"
-                />
-              </div>
-
-              <div className="settings-range">
-                <div><label>Recouvrement RAG</label><span>{chunkOverlap} mots</span></div>
-                <small>Conserve le lien entre deux extraits successifs.</small>
-                <input
-                  type="range"
-                  min="0"
-                  max="300"
-                  step="10"
-                  value={chunkOverlap}
-                  onChange={(e) => setChunkOverlap(parseInt(e.target.value))}
-                  className="settings-range__input"
-                />
-              </div>
-
-              <div className="settings-danger-zone">
-                <div><strong>Nettoyer l’index de recherche</strong><span>Supprimer le cache des embeddings stockés.</span></div>
-                  <button
-                    onClick={clearCache}
-                    className="settings-danger-button"
-                  >
-                    Effacer
-                  </button>
-                </div>
             </div>
           )}
 
@@ -315,6 +243,7 @@ export default function SettingsModal({
         </button>
         <StatefulSaveButton
           onSave={() => new Promise<void>((resolve) => {
+            saveUserPreferences({ language: lang, textAnimations });
             setTimeout(() => {
               resolve();
               setTimeout(onClose, 800);

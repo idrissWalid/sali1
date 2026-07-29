@@ -77,7 +77,16 @@ function AlertDialogOverlay({
   ...props
 }: AlertDialogOverlayProps) {
   return (
-    <AlertDialogPrimitive.Overlay data-slot="alert-dialog-overlay" forceMount render={<motion.div key="alert-dialog-overlay" initial={{ opacity: 0, filter: 'blur(4px)' }} animate={{ opacity: 1, filter: 'blur(0px)' }} exit={{ opacity: 0, filter: 'blur(4px)' }} transition={transition} {...props} />}></AlertDialogPrimitive.Overlay>
+    <AlertDialogPrimitive.Overlay data-slot="alert-dialog-overlay" forceMount asChild>
+      <motion.div
+        key="alert-dialog-overlay"
+        initial={{ opacity: 0, filter: 'blur(4px)' }}
+        animate={{ opacity: 1, filter: 'blur(0px)' }}
+        exit={{ opacity: 0, filter: 'blur(4px)' }}
+        transition={transition}
+        {...props}
+      />
+    </AlertDialogPrimitive.Overlay>
   );
 }
 
@@ -105,19 +114,35 @@ function AlertDialogContent({
   const rotateAxis = isVertical ? 'rotateX' : 'rotateY';
 
   return (
-    <AlertDialogPrimitive.Content forceMount onOpenAutoFocus={onOpenAutoFocus} onCloseAutoFocus={onCloseAutoFocus} onEscapeKeyDown={onEscapeKeyDown} render={<motion.div key="alert-dialog-content" data-slot="alert-dialog-content" initial={{
-                opacity: 0,
-                filter: 'blur(4px)',
-                transform: `perspective(500px) ${rotateAxis}(${initialRotation}) scale(0.8)`,
-              }} animate={{
-                opacity: 1,
-                filter: 'blur(0px)',
-                transform: `perspective(500px) ${rotateAxis}(0deg) scale(1)`,
-              }} exit={{
-                opacity: 0,
-                filter: 'blur(4px)',
-                transform: `perspective(500px) ${rotateAxis}(${initialRotation}) scale(0.8)`,
-              }} transition={transition} {...props} />}></AlertDialogPrimitive.Content>
+    <AlertDialogPrimitive.Content
+      forceMount
+      onOpenAutoFocus={onOpenAutoFocus}
+      onCloseAutoFocus={onCloseAutoFocus}
+      onEscapeKeyDown={onEscapeKeyDown}
+      asChild
+    >
+      <motion.div
+        key="alert-dialog-content"
+        data-slot="alert-dialog-content"
+        initial={{
+          opacity: 0,
+          filter: 'blur(4px)',
+          transform: `perspective(500px) ${rotateAxis}(${initialRotation}) scale(0.8)`,
+        }}
+        animate={{
+          opacity: 1,
+          filter: 'blur(0px)',
+          transform: `perspective(500px) ${rotateAxis}(0deg) scale(1)`,
+        }}
+        exit={{
+          opacity: 0,
+          filter: 'blur(4px)',
+          transform: `perspective(500px) ${rotateAxis}(${initialRotation}) scale(0.8)`,
+        }}
+        transition={transition}
+        {...props}
+      />
+    </AlertDialogPrimitive.Content>
   );
 }
 
