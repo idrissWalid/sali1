@@ -20,6 +20,74 @@ MAX_BAR_CATEGORIES = 25      # au-delà, on agrège la traîne dans « Autres »
 TOP_CATEGORIES = 15
 IDENTIFIER_NAME_PATTERN = re.compile(r"(^|_)(id|uuid|guid|code|ref|reference|email|mail|url|slug)($|_)", re.I)
 
+# ── Valeurs manquantes ───────────────────────────────────────────────────────
+# Une donnée absente n'est PAS une modalité : elle ne doit apparaître ni comme
+# une part du camembert, ni comme une barre, ni dans la traîne « Autres ». Le
+# graphique décrit la distribution des valeurs observées ; le volume manquant est
+# rapporté à part (`n_missing`), pas mélangé aux catégories réelles.
+#
+# `read_csv` neutralise déjà ces écritures, mais pas les valeurs venues d'un
+# Excel, d'un OCR ou d'un tableau extrait d'un PDF : elles y arrivent sous forme
+# de chaînes. On applique donc la même règle qu'au CSV, à l'identique — la liste
+# se limite à des écritures purement techniques du « vide ». Les placeholders
+# ambigus (« - », « ? », « inconnu ») restent des modalités : les traiter comme
+# manquants ferait disparaître sans trace une catégorie potentiellement réelle.
+MISSING_TOKENS = frozenset({
+    "", "#n/a", "#n/a n/a", "#na", "-1.#ind", "-1.#qnan", "-nan", "1.#ind",
+    "1.#qnan", "<na>", "n/a", "na", "nan", "nat", "none", "null",
+})
+
+
+def _drop_missing(series: pd.Series) -> pd.Series:
+    """Retire les valeurs manquantes, y compris celles écrites en toutes lettres.
+
+    `dropna` seul laisse passer les manquants stockés comme texte (« N/A »,
+    « NULL », cellule contenant une espace) : ils deviendraient alors une
+    modalité à part entière dans le dashboard.
+    """
+    series = series.dropna()
+    if series.empty or not (pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series)):
+        return series
+    blank = series.map(lambda value: isinstance(value, str) and value.strip().lower() in MISSING_TOKENS)
+    return series[~blank]
+
+
+def _null_if_missing(value):
+    """`None` pour tout manquant pandas (NaN, NaT, pd.NA), la valeur sinon."""
+    try:
+        if bool(pd.isna(value)):
+            return None
+    except (TypeError, ValueError):
+        # `pd.isna` renvoie un tableau sur une valeur composite : pas un manquant.
+        pass
+    return convert_types(value)
+
+
+def _preview_records(frame: pd.DataFrame, limit: int = 5) -> list[dict]:
+    """Aperçu sérialisable en JSON, les manquants devenant `null`.
+
+    La neutralisation est faite ICI, sur la seule copie destinée à l'affichage.
+    L'appliquer au DataFrame d'analyse (`df.replace({np.nan: None})`) basculerait
+    en dtype `object` toute colonne contenant un manquant : une numérique ou une
+    date cesserait alors d'être reconnue comme telle et serait tracée comme une
+    catégorielle, chaque valeur devenant une modalité.
+    """
+    return [
+        {key: _null_if_missing(value) for key, value in row.items()}
+        for row in frame.head(limit).to_dict(orient="records")
+    ]
+
+
+def _discrete_label(value) -> str:
+    """Libellé d'une modalité numérique discrète.
+
+    Une colonne 0/1 comportant des manquants est typée `float64` par pandas :
+    sans ça, ses modalités s'afficheraient « 0.0 » et « 1.0 ».
+    """
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
 
 def _nice_step(raw_step: float) -> float:
     """Arrondit un pas au multiple « rond » 1/2/5 × 10ⁿ immédiatement supérieur.
@@ -75,8 +143,15 @@ def _build_histogram(series: pd.Series, target_bins: int = 10) -> list[dict]:
 
 
 def _category_counts(series: pd.Series) -> list[dict]:
-    """Effectifs par catégorie, la traîne étant regroupée dans « Autres »."""
-    counts = series.astype(str).value_counts()
+    """Effectifs par catégorie, la traîne étant regroupée dans « Autres ».
+
+    Le nettoyage est refait ici, APRÈS `astype(str)`, plutôt que supposé fait par
+    l'appelant : la conversion en texte transforme tout manquant résiduel en
+    « nan » / « NaT » / « None », qui passerait ensuite pour une modalité
+    ordinaire — voire irait grossir « Autres », où plus rien ne permettrait de la
+    distinguer.
+    """
+    counts = _drop_missing(series.astype(str)).value_counts()
     if len(counts) > MAX_BAR_CATEGORIES:
         head = counts.head(TOP_CATEGORIES)
         data = [{"name": str(k), "value": int(v)} for k, v in head.items()]
@@ -424,7 +499,6 @@ async def interpret_variable(
 
 async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> dict:
     import pandas as pd
-    import numpy as np
     import io
     from app.services.session_service import get_session, list_datasets, get_dataset
 
@@ -456,16 +530,14 @@ async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> 
     else:
         df = pd.read_excel(io.BytesIO(file_bytes))
 
-    # Replace NaN with None for JSON serialization
-    df = df.replace({np.nan: None})
-
     # L'aperçu doit correspondre au dataset affiché, pas systématiquement à
     # celui de la session : on ne retombe sur `data_preview` que pour le
-    # fichier principal.
+    # fichier principal. Seul l'aperçu est neutralisé pour JSON — `df` conserve
+    # ses dtypes, dont dépend tout le choix des graphiques ci-dessous.
     from app.services.session_service import MAIN_DATASET_ID
     preview = embedded_preview or (
         session.get("data_preview") if dataset_id == MAIN_DATASET_ID else None
-    ) or df.head(5).to_dict(orient="records")
+    ) or _preview_records(df)
     overview = stats.get("dataset_overview", {})
     variables = stats.get("variables", {})
     
@@ -493,7 +565,7 @@ async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> 
     #    quasi toutes distinctes (quel que soit le type, pas seulement numérique).
     id_cols = set()
     for col in df.columns:
-        series = df[col].dropna()
+        series = _drop_missing(df[col])
         if series.empty:
             id_cols.add(col)
             continue
@@ -509,9 +581,18 @@ async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> 
         if col == time_col or col in id_cols:
             continue
 
-        series = df[col].dropna()
+        # Les manquants sont écartés une fois pour toutes : ils ne comptent ni
+        # dans la cardinalité, ni dans les classes, ni dans les catégories. Leur
+        # volume est reporté à part sur chaque distribution.
+        series = _drop_missing(df[col])
         if series.empty:
             continue
+
+        n_missing = n_rows - int(series.size)
+        missing_meta = {
+            "n_missing": n_missing,
+            "pct_missing": round(100 * n_missing / n_rows, 2) if n_rows else 0.0,
+        }
 
         n_distinct = series.nunique()
         col_type = variables.get(col, {}).get("type", "Unknown")
@@ -527,7 +608,7 @@ async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> 
             if time_col is not None and n_distinct > MAX_DISCRETE_VALUES:
                 built = _build_time_series(df[[time_col, col]], time_col, col, how="mean")
                 if built is not None:
-                    distributions[col] = {"type": "timeseries", "chart": "line", **built}
+                    distributions[col] = {"type": "timeseries", "chart": "line", **missing_meta, **built}
                     continue
 
             if n_distinct <= MAX_DISCRETE_VALUES:
@@ -537,12 +618,14 @@ async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> 
                 distributions[col] = {
                     "type": "categorical",
                     "chart": "donut" if n_distinct <= MAX_DONUT_SLICES else "bar",
-                    "data": [{"name": str(k), "value": int(v)} for k, v in counts.items()],
+                    **missing_meta,
+                    "data": [{"name": _discrete_label(k), "value": int(v)} for k, v in counts.items()],
                 }
             else:
                 distributions[col] = {
                     "type": "numeric",
                     "chart": "histogram",
+                    **missing_meta,
                     "data": _build_histogram(series),
                 }
 
@@ -553,7 +636,7 @@ async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> 
             frame = pd.DataFrame({col: series, "_count": 1})
             built = _build_time_series(frame, col, "_count", how="count")
             if built is not None:
-                distributions[col] = {"type": "datetime", "chart": "line", **built}
+                distributions[col] = {"type": "datetime", "chart": "line", **missing_meta, **built}
 
         # ── Catégorielles / booléennes / texte ────────────────────────────
         else:
@@ -567,6 +650,7 @@ async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> 
             distributions[col] = {
                 "type": "categorical",
                 "chart": chart,
+                **missing_meta,
                 "data": data,
             }
 

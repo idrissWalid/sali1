@@ -42,6 +42,9 @@ interface DashboardData {
     type: string;
     /** Graphique choisi par le backend : histogram | bar | hbar | donut | line */
     chart?: string;
+    /** Lignes exclues du graphique faute de valeur : ce n'est pas une modalité. */
+    n_missing?: number;
+    pct_missing?: number;
     /** Séries temporelles : granularités disponibles et points par granularité */
     granularities?: { key: string; label: string; points: number }[];
     default_granularity?: string;
@@ -309,6 +312,17 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
+
+            {/* Les manquants ne sont pas une modalité : ils sont exclus du
+                graphique, et leur volume est annoncé ici plutôt que noyé dans
+                une part « Autres » indiscernable d'une vraie catégorie. */}
+            {(activeDist?.n_missing ?? 0) > 0 && (
+              <p className="-mt-4 mb-5 text-xs text-gray-500 dark:text-gray-400">
+                {(activeDist?.n_missing ?? 0).toLocaleString("fr-FR")} ligne
+                {(activeDist?.n_missing ?? 0) > 1 ? "s" : ""} sans valeur ({activeDist?.pct_missing ?? 0}%)
+                {" "}exclue{(activeDist?.n_missing ?? 0) > 1 ? "s" : ""} du graphique.
+              </p>
+            )}
 
             <div className="dashboard-chart-canvas flex-1 w-full">
               {!activeDist || chartData.length === 0 ? (
