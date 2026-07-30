@@ -99,10 +99,19 @@ async def upload_file(
     model: str | None = Form(None),
     index_doc: str = Form("true"),
     session_id: str = Form(""),
+    skip_interpretation: str = Form("false"),
 ):
     """Analyse un fichier. Avec `session_id`, le fichier est rattaché comme jeu
-    de données supplémentaire à une session existante au lieu d'en créer une."""
+    de données supplémentaire à une session existante au lieu d'en créer une.
+
+    `skip_interpretation=true` prépare la session (profil, statistiques, fichier
+    stocké) sans produire le texte d'accueil ni le titre déduit — les deux seuls
+    appels LLM de l'upload. Réservé aux campagnes d'évaluation, qui posent
+    ensuite leurs propres questions via `/api/chat` : le contexte de données
+    exploité par le chat est identique, seul le message d'accueil disparaît.
+    """
     attach_to_session = session_id.strip() or None
+    want_interpretation = skip_interpretation.strip().lower() not in ("true", "1", "yes")
 
     async def event_generator():
         # Étape 1 : Lecture et détection du format
@@ -204,7 +213,10 @@ async def upload_file(
             await asyncio.sleep(0.05)
 
             try:
-                result = await analyze_tabular(file_bytes, filename, model=model)
+                result = await analyze_tabular(
+                    file_bytes, filename, model=model,
+                    with_interpretation=want_interpretation,
+                )
                 if result.get("status") == "error":
                     yield json.dumps({
                         "status": "error",
@@ -246,16 +258,22 @@ async def upload_file(
                 session_id = create_session()
                 save_data_context(session_id, result["profile"], result["stats"], filename)
                 from app.services.session_service import save_initial_analysis
-                save_initial_analysis(session_id, result["interpretation"])
                 save_file_bytes(session_id, file_bytes, filename)
-                add_to_history(session_id, "model", result["interpretation"])
 
-                # Titre déduit du contenu : sans ça, trois imports du même fichier
-                # donnent trois entrées identiques dans l'historique des sessions.
-                titre = await asyncio.to_thread(
-                    titre_depuis_donnees,
-                    filename, result["profile"], result["interpretation"], model=model,
-                )
+                if want_interpretation:
+                    save_initial_analysis(session_id, result["interpretation"])
+                    add_to_history(session_id, "model", result["interpretation"])
+
+                    # Titre déduit du contenu : sans ça, trois imports du même fichier
+                    # donnent trois entrées identiques dans l'historique des sessions.
+                    titre = await asyncio.to_thread(
+                        titre_depuis_donnees,
+                        filename, result["profile"], result["interpretation"], model=model,
+                    )
+                else:
+                    # Sans interprétation, il n'y a rien à résumer en un titre et
+                    # l'historique reste vide : le nom du fichier suffit.
+                    titre = filename
                 rename_session(session_id, titre)
 
                 # L'ancien dashboard HTML n'est plus généré ici.

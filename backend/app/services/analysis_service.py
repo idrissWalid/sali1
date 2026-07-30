@@ -397,7 +397,21 @@ Propose 3 analyses concrètes et spécifiques que tu peux réaliser sur ces donn
 """
 
 
-async def analyze_tabular(file_bytes: bytes, filename: str, model: str | None = None) -> dict:
+async def analyze_tabular(
+    file_bytes: bytes,
+    filename: str,
+    model: str | None = None,
+    with_interpretation: bool = True,
+) -> dict:
+    """Profil + statistiques d'un fichier tabulaire, et son interprétation LLM.
+
+    `with_interpretation=False` conserve tout le calcul déterministe (profil,
+    ydata-profiling) mais saute l'appel au LLM. C'est ce que demandent les
+    campagnes d'évaluation, qui posent leurs propres questions et n'ont que
+    faire du texte d'accueil : ce dernier coûte un appel par fichier sans entrer
+    dans le contexte que `/api/chat` exploite (`get_data_context` ne lit que le
+    profil et les stats).
+    """
     from app.services.ingestion_service import load_tabular
     import pandas as pd
 
@@ -416,8 +430,11 @@ async def analyze_tabular(file_bytes: bytes, filename: str, model: str | None = 
 
     # Utilisation de ydata-profiling pour les statistiques descriptives
     stats = await asyncio.to_thread(generate_profiling_stats, df)
-    prompt = build_analysis_prompt(profile, stats)
-    interpretation = await asyncio.to_thread(ask_gemini, prompt, model=model)
+    if with_interpretation:
+        prompt = build_analysis_prompt(profile, stats)
+        interpretation = await asyncio.to_thread(ask_gemini, prompt, model=model)
+    else:
+        interpretation = ""
 
     from app.services.session_service import save_initial_analysis
     return {

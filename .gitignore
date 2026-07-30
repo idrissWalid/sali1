@@ -18,6 +18,11 @@ frontend/.next/
 fr_claude/node_modules/
 fr_claude/.next/
 
+# Copies jetables de l'app Next.js créées pour l'exploration du logo
+# (frontend-rosette, frontend-ribbon-s…) — le résultat retenu est intégré
+# dans frontend/, ces variantes n'ont pas vocation à vivre dans l'historique.
+/frontend-*/
+
 # IDEs and OS
 .vscode/
 .idea/
@@ -41,6 +46,10 @@ data/visual_docs/
 data/models/
 cache.db
 backend/cache.db
+
+# Jeu de données InfiAgent-DABench (~60 Mo) — re-téléchargeable à l'identique
+# avec backend/download_dabench.py, donc hors du dépôt.
+backend/data/
 
 # Venv dédié à TimeCopilot (~5 Go) — dépendances incompatibles avec le venv
 # principal, voir backend/requirements-timecopilot.txt

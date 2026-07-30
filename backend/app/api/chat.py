@@ -11,7 +11,7 @@ def to_thread(func, /, *args, **kwargs):
     toutes les autres sessions pendant toute leur durée (jusqu'à 180s pour un
     tournoi ML ou un grid search SARIMA)."""
     return asyncio.to_thread(func, *args, **kwargs)
-from app.services.gemini_service import ask_gemini, generate_visualization_code
+from app.services.gemini_service import ask_gemini, generate_visualization_code, response_language
 from app.services.ml_service import generate_ml_code, generate_ml_interpretation, detect_model_family
 from app.services.model_specs import MODEL_SPECS, ModelFamily
 from app.services.intent_service import detect_intent
@@ -41,6 +41,9 @@ class ChatRequest(BaseModel):
     session_id: str
     message: str
     model: Optional[str] = None
+    # Langue de réponse : "fr" par défaut (le produit est francophone). Les
+    # campagnes d'évaluation passent "en" — voir gemini_service.response_language.
+    language: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -93,7 +96,22 @@ async def _run_dataset_intent(intent, session_id, message, model, history, file_
                 images = result["images"]
                 raw_output = result["output"]
 
-                interp_prompt = f"""
+                # Prompt intégralement dans la langue cible : une consigne de
+                # langue isolée au milieu d'un texte français est ignorée, le
+                # modèle suivant la langue dominante du prompt.
+                if response_language.get() == "en":
+                    interp_prompt = f"""
+{data_context}
+The user asked: {message}
+Result of the statistical analysis: {raw_output}
+{"A chart was generated." if images else ""}
+
+Present this result clearly and accessibly (2-4 sentences), in English.
+Do not repeat the raw figures if the result speaks for itself — explain what they mean.
+If the user asked for a specific answer format, reproduce it EXACTLY, first, before any commentary.
+"""
+                else:
+                    interp_prompt = f"""
 {data_context}
 L'utilisateur a demandé : {message}
 Résultat de l'analyse statistique : {raw_output}
@@ -285,6 +303,10 @@ async def _run_chat(request: ChatRequest):
     session = get_session(request.session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session introuvable ou expirée.")
+
+    # Posé une seule fois ici : toutes les branches ci-dessous finissent par
+    # appeler `ask_gemini`, qui lit ce contexte pour choisir son prompt système.
+    response_language.set((request.language or "fr").lower())
 
     session_type = get_session_type(request.session_id)
     history = get_history(request.session_id)

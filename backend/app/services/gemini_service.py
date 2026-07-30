@@ -1,4 +1,5 @@
 import logging
+from contextvars import ContextVar
 
 try:
     from google import genai
@@ -82,19 +83,60 @@ def complete_text(prompt: str, model: str, history: list | None = None) -> str:
     return ask_ollama(full_prompt, model=model).strip()
 
 
-SYSTEM_PROMPT = """Tu es un agent d'analyse de données. Tu es proactif, clair et accessible.
+# ── Langue de réponse de l'agent ─────────────────────────────────────────────
+# L'application répond en français ; seules les campagnes d'évaluation ont
+# besoin d'autre chose (InfiAgent-DABench pose ses questions en anglais, et une
+# consigne de langue au niveau du message utilisateur se ferait écraser par la
+# règle du prompt système).
+#
+# Un ContextVar plutôt qu'un paramètre de fonction : la réponse finale peut
+# sortir de n'importe laquelle des branches de `_run_chat` (sandbox, séries
+# temporelles, tournoi supervisé…), qui appellent `ask_gemini` à des profondeurs
+# très différentes. `asyncio.to_thread` recopie le contexte courant, la valeur
+# traverse donc les bascules de thread du chemin de chat.
+response_language: ContextVar[str] = ContextVar("response_language", default="fr")
+
+# Deux prompts complets plutôt qu'une ligne de consigne insérée dans un texte
+# français : mesuré, une phrase « answer in English » noyée dans des
+# instructions françaises est ignorée par le modèle, qui suit la langue
+# dominante du prompt. La variante anglaise doit l'être de bout en bout.
+_SYSTEM_PROMPTS = {
+    "fr": """Tu es un agent d'analyse de données. Tu es proactif, clair et accessible.
 Tu interprètes toujours les résultats en langage naturel.
 Quand des données sont disponibles en contexte, tu t'appuies dessus pour répondre.
 Tu réponds toujours en français.
 
 Ne commence JAMAIS tes réponses par des formules d'introduction ou des salutations clichées/répétitives (par exemple : "Bonjour", "En tant qu'expert en analyse de données, voici...", "En tant qu'agent...", "Voici le résultat de...", "En tant que grand modèle de langue...", etc.). Entre directement dans le sujet ou réponds directement à la question sans préambule inutile.
 
-À CHAQUE RÉPONSE, tu DOIS toujours formuler 1 à 3 suggestions d'analyses complémentaires pertinentes que l'utilisateur pourrait te demander de faire sur le jeu de données pour approfondir le sujet."""
+À CHAQUE RÉPONSE, tu DOIS toujours formuler 1 à 3 suggestions d'analyses complémentaires pertinentes que l'utilisateur pourrait te demander de faire sur le jeu de données pour approfondir le sujet.""",
+
+    # Variante d'évaluation : pas de suggestions d'analyses complémentaires
+    # imposées — sur un banc en forme fermée, elles n'ajoutent que du bruit
+    # autour de la réponse attendue.
+    "en": """You are a data analysis agent. You are proactive, clear and accessible.
+You always interpret results in natural language.
+When data is available in the context, you rely on it to answer.
+You always answer in English.
+
+NEVER begin your answers with introductory or clichéd greetings (for example: "Hello", "As a data analysis expert, here is...", "As an agent...", "Here is the result of...", etc.). Get straight to the point and answer the question directly.
+
+When the user asks for a specific answer format, follow it EXACTLY and put nothing before it.""",
+}
+
+
+def language_rule(default: str = "fr") -> str:
+    """Consigne de langue seule, pour les prompts construits ailleurs."""
+    rules = {"fr": "Réponds en français.", "en": "Answer in English."}
+    return rules.get(response_language.get(), rules[default])
+
+
+def build_system_prompt() -> str:
+    return _SYSTEM_PROMPTS.get(response_language.get(), _SYSTEM_PROMPTS["fr"])
 
 def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: str | None = None) -> str:
     model = model or config.get_default_model()
     try:
-        full_prompt = SYSTEM_PROMPT
+        full_prompt = build_system_prompt()
         if data_context:
             full_prompt += f"\n\n{data_context}"
         full_prompt += f"\n\nQuestion : {prompt}"
@@ -124,7 +166,7 @@ def ask_gemini_vision(prompt: str, images: list, history: list = [], model: str 
     vers le fournisseur choisi par l'utilisateur. Cette fonction n'est que le bras
     Gemini de ce routage."""
     try:
-        full_prompt = SYSTEM_PROMPT + f"\n\nQuestion : {prompt}"
+        full_prompt = build_system_prompt() + f"\n\nQuestion : {prompt}"
         gemini_history = _build_gemini_history(history)
 
         parts = [types.Part.from_bytes(data=img, mime_type="image/png") for img in images]
