@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark" data-sali-palette="4a">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SALI AI — planche de test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Barlow:wght@400;500&family=Caprasimo&family=Cormorant+Garamond:wght@300;400&display=swap">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="animations.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--sali-ground); color: var(--sali-ink);
+    font-family: Barlow, system-ui, sans-serif; transition: background .25s, color .25s; }
+  header { padding: 40px 40px 24px; display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-end;
+    border-bottom: 1px solid color-mix(in oklab, var(--sali-ink) 18%, transparent); }
+  h1 { font-family: "Barlow Condensed", sans-serif; font-weight: 600; font-size: 40px; margin: 0;
+    letter-spacing: .02em; text-transform: uppercase; }
+  p.lede { margin: 6px 0 0; max-width: 62ch; color: var(--sali-muted); line-height: 1.5; }
+  .controls { display: flex; gap: 28px; margin-left: auto; }
+  fieldset { border: 1px solid color-mix(in oklab, var(--sali-ink) 22%, transparent); padding: 10px 14px 12px; }
+  legend { font-family: "Barlow Condensed", sans-serif; text-transform: uppercase; letter-spacing: .14em;
+    font-size: 12px; color: var(--sali-muted); padding: 0 6px; }
+  .seg { display: flex; gap: 8px; }
+  .seg button { font-family: "Barlow Condensed", sans-serif; text-transform: uppercase; letter-spacing: .08em;
+    font-size: 14px; padding: 5px 12px; background: none; color: var(--sali-ink); cursor: pointer;
+    border: 1px solid color-mix(in oklab, var(--sali-ink) 25%, transparent); }
+  .seg button[aria-pressed="true"] { background: var(--sali-accent); color: var(--sali-ground);
+    border-color: var(--sali-accent); }
+  .seg button:focus-visible { outline: 2px solid var(--sali-accent); outline-offset: 2px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 0; }
+  .card { border-right: 1px solid color-mix(in oklab, var(--sali-ink) 14%, transparent);
+    border-bottom: 1px solid color-mix(in oklab, var(--sali-ink) 14%, transparent); }
+  .stage { padding: 40px 32px; min-height: 190px; display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+  .meta { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    border-top: 1px solid color-mix(in oklab, var(--sali-ink) 14%, transparent); }
+  .badge { font-family: "Barlow Condensed", sans-serif; letter-spacing: .12em; font-size: 13px;
+    background: var(--sali-accent); color: var(--sali-ground); padding: 2px 8px; }
+  .name { font-family: "Barlow Condensed", sans-serif; text-transform: uppercase; font-size: 18px; letter-spacing: .03em; }
+  .kind { font-size: 13px; color: var(--sali-muted); }
+  .meta button { margin-left: auto; font-family: Barlow, sans-serif; font-size: 12px; padding: 4px 10px;
+    background: none; color: var(--sali-muted); cursor: pointer;
+    border: 1px solid color-mix(in oklab, var(--sali-ink) 22%, transparent); }
+  .meta button + button { margin-left: 0; }
+  .meta button:hover { color: var(--sali-ink); }
+  .meta button[aria-pressed="true"] { color: var(--sali-ground); background: var(--sali-accent); border-color: var(--sali-accent); }
+  .sizes { display: flex; align-items: center; gap: 18px; margin-left: auto; }
+  footer { padding: 28px 40px 60px; color: var(--sali-muted); font-size: 14px; line-height: 1.6; max-width: 76ch; }
+  a { color: var(--sali-accent); } a:hover { color: var(--sali-hi); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>SALI AI — planche de test</h1>
+    <p class="lede">Onze marques, deux modes, trois palettes. « Rejouer » relance l'animation d'entrée ;
+      « is-working » simule l'état pendant lequel l'agent analyse le jeu de données.</p>
+  </div>
+  <div class="controls">
+    <fieldset><legend>Mode</legend><div class="seg" id="theme">
+      <button data-v="dark" aria-pressed="true">Sombre</button>
+      <button data-v="light" aria-pressed="false">Clair</button>
+    </div></fieldset>
+    <fieldset><legend>Palette</legend><div class="seg" id="palette">
+      <button data-v="4a" aria-pressed="true">4A acier</button>
+      <button data-v="4c" aria-pressed="false">4C or</button>
+      <button data-v="4e" aria-pressed="false">4E sauge</button>
+    </div></fieldset>
+  </div>
+</header>
+
+<div class="grid">
+  <article class="card" data-slug="resolve">
+    <div class="stage">
+      <span class="sali-brand">
+        <svg class="sali-mark sali-anim-resolve" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+          <g stroke="var(--sali-ink)" stroke-width="7" opacity=".4" class="sali-raw">
+            <path d="M4 16 H30 M40 16 H58 M68 16 H92"></path>
+            <path d="M4 36 H20 M30 36 H74"></path>
+            <path d="M4 56 H46 M56 56 H68 M78 56 H92"></path>
+          </g>
+          <path d="M4 80 H92" stroke="var(--sali-accent)" stroke-width="11" class="sali-signal"></path>
+        </svg>
+        <span class="sali-lockup sali-condensed"><span>SALI</span><em>AI</em></span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">1B</span>
+      <span class="name">Resolve</span>
+      <span class="kind">symbole + wordmark</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="s-bars">
+    <div class="stage">
+      <span class="sali-brand">
+        <svg class="sali-mark sali-anim-sbars" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+          <rect x="8" y="6" width="80" height="12" fill="var(--sali-ink)" class="sali-bar b1"></rect>
+          <rect x="8" y="26" width="30" height="12" fill="var(--sali-ink)" opacity=".55" class="sali-bar b2"></rect>
+          <rect x="8" y="46" width="80" height="12" fill="var(--sali-accent)" class="sali-bar b3"></rect>
+          <rect x="58" y="66" width="30" height="12" fill="var(--sali-ink)" opacity=".55" class="sali-bar b4"></rect>
+          <rect x="8" y="86" width="80" height="8" fill="var(--sali-ink)" class="sali-bar b5"></rect>
+        </svg>
+        <span class="sali-lockup sali-condensed"><span>SALI</span><em>AI</em></span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">1C</span>
+      <span class="name">S-bars</span>
+      <span class="kind">monogramme</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="wordart-pill">
+    <div class="stage">
+      <span class="sali-lockup sali-wordart sali-anim-pill">
+        <span class="sali-pill">SALI</span><span class="sali-ai">AI</span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">2A</span>
+      <span class="name">Wordart pill</span>
+      <span class="kind">wordmark seul</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="ribbon-s">
+    <div class="stage">
+      <span class="sali-brand">
+        <svg class="sali-mark sali-anim-draw" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+          <path d="M76 26 C76 10 24 8 24 30 C24 46 48 48 64 50" stroke="var(--sali-ink)" stroke-width="12" stroke-linecap="round" pathLength="100" class="sali-draw-1"></path>
+          <path d="M64 50 C80 53 74 62 74 68 C74 90 22 88 22 72" stroke="var(--sali-accent)" stroke-width="12" stroke-linecap="round" pathLength="100" class="sali-draw-2"></path>
+        </svg>
+        <span class="sali-lockup sali-round"><span>SALI</span><em>AI</em></span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">2B</span>
+      <span class="name">Ribbon S</span>
+      <span class="kind">symbole</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="soft-stack">
+    <div class="stage">
+      <span class="sali-brand">
+        <svg class="sali-mark sali-anim-settle" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+          <circle cx="30" cy="26" r="20" fill="var(--sali-ink)" opacity=".38" class="sali-s1"></circle>
+          <rect x="10" y="56" width="52" height="26" rx="13" fill="var(--sali-ink)" opacity=".55" class="sali-s2"></rect>
+          <rect x="46" y="20" width="42" height="42" rx="16" fill="var(--sali-accent)" class="sali-s3"></rect>
+        </svg>
+        <span class="sali-lockup sali-round"><span>SALI</span><em>AI</em></span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">2C</span>
+      <span class="name">Soft stack</span>
+      <span class="kind">symbole</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="rosette">
+    <div class="stage">
+      <span class="sali-brand">
+        <svg class="sali-mark sali-anim-rosette" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+          <g stroke-width="7" stroke-linecap="round" fill="none" class="sali-spin">
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="var(--sali-accent)" class="sali-petal p1"></path>
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="var(--sali-accent-2)" transform="rotate(72 48 50)" class="sali-petal p2"></path>
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="var(--sali-accent)" transform="rotate(144 48 50)" class="sali-petal p3"></path>
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="var(--sali-accent-2)" transform="rotate(216 48 50)" class="sali-petal p4"></path>
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="var(--sali-accent)" transform="rotate(288 48 50)" class="sali-petal p5"></path>
+          </g>
+        </svg>
+        <span class="sali-lockup sali-round"><span>SALI</span><em>AI</em></span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">3B</span>
+      <span class="name">Rosette</span>
+      <span class="kind">symbole</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="lowercase-serif">
+    <div class="stage">
+      <span class="sali-lockup sali-serif sali-anim-rule">
+        <span class="sali-word">sali<em>ai</em></span>
+        <svg class="sali-underline" width="180" height="12" viewBox="0 0 180 12" fill="none" aria-hidden="true">
+          <path d="M2 8 C40 2 96 12 178 4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" pathLength="100"></path>
+        </svg>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">3C</span>
+      <span class="name">Lowercase serif</span>
+      <span class="kind">wordmark seul</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="wave-diamond">
+    <div class="stage">
+      <span class="sali-brand">
+        <svg class="sali-mark sali-anim-waves" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+          <rect x="18" y="18" width="60" height="60" rx="14" fill="var(--sali-accent)" transform="rotate(45 48 48)" class="sali-body"></rect>
+          <g stroke="var(--sali-ground)" stroke-width="5" stroke-linecap="round" class="sali-wave-group">
+            <path d="M27 42 C36 42 39 32 48 32 C57 32 60 42 69 42" class="sali-wave w1"></path>
+            <path d="M27 62 C36 62 39 52 48 52 C57 52 60 62 69 62" class="sali-wave w2"></path>
+          </g>
+        </svg>
+        <span class="sali-lockup sali-round"><span>SALI</span><em>AI</em></span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">3E</span>
+      <span class="name">Wave diamond</span>
+      <span class="kind">symbole</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="brushed-s">
+    <div class="stage">
+      <span class="sali-brand">
+        <svg class="sali-mark sali-anim-sheen" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+          <defs>
+            <linearGradient id="salaM" x1="20" y1="10" x2="76" y2="86" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="var(--sali-hi)"></stop><stop offset=".42" stop-color="var(--sali-accent)"></stop>
+              <stop offset=".62" stop-color="var(--sali-deep)"></stop><stop offset="1" stop-color="var(--sali-accent-2)"></stop></linearGradient>
+            <linearGradient id="salaB" x1="60" y1="14" x2="84" y2="80" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="var(--sali-ink)" stop-opacity=".55"></stop><stop offset="1" stop-color="var(--sali-ink)" stop-opacity=".22"></stop></linearGradient>
+            <linearGradient id="salaS" x1="0" y1="0" x2="96" y2="96" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#fff" stop-opacity="0"></stop><stop offset=".5" stop-color="#fff" stop-opacity=".55"></stop><stop offset="1" stop-color="#fff" stop-opacity="0"></stop></linearGradient>
+            <clipPath id="salaC"><path d="M74 20 C62 12 40 16 40 32 C40 44 68 50 68 66 C68 84 34 86 22 76 C36 82 58 78 58 66 C58 54 30 48 30 32 C30 14 60 12 74 20 Z"></path></clipPath>
+          </defs>
+          <circle cx="48" cy="48" r="43" stroke="var(--sali-ink)" stroke-width="1.6" opacity=".45" fill="none"></circle>
+          <path d="M60 13 C84 26 89 60 66 81 C80 58 77 31 60 13 Z" fill="url(#salaB)" class="sali-blade"></path>
+          <path d="M74 20 C62 12 40 16 40 32 C40 44 68 50 68 66 C68 84 34 86 22 76 C36 82 58 78 58 66 C58 54 30 48 30 32 C30 14 60 12 74 20 Z" fill="url(#salaM)"></path>
+          <g clip-path="url(#salaC)"><rect x="-96" y="0" width="96" height="96" fill="url(#salaS)" class="sali-sheen"></rect></g>
+        </svg>
+        <span class="sali-lockup sali-serifcaps"><span>SALI</span><em>AI</em></span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">5A</span>
+      <span class="name">Brushed S</span>
+      <span class="kind">symbole 3D</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="ribbon-rosette">
+    <div class="stage">
+      <span class="sali-brand">
+        <svg class="sali-mark sali-anim-rosette" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+          <defs>
+            <linearGradient id="salrA-r5c" x1="30" y1="6" x2="60" y2="52" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="var(--sali-hi)"></stop><stop offset="1" stop-color="var(--sali-deep)"></stop></linearGradient>
+            <filter id="salrS-r5c" x="-40%" y="-40%" width="200%" height="200%">
+              <feDropShadow dx="1" dy="2.5" stdDeviation="2" flood-color="#000" flood-opacity=".5"></feDropShadow></filter>
+          </defs>
+          <g stroke-width="8" stroke-linecap="round" fill="none" filter="url(#salrS-r5c)" class="sali-spin">
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="url(#salrA-r5c)" opacity="1" class="sali-petal p1"></path>
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="url(#salrA-r5c)" opacity="0.85" transform="rotate(72 48 50)" class="sali-petal p2"></path>
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="url(#salrA-r5c)" opacity="0.7" transform="rotate(144 48 50)" class="sali-petal p3"></path>
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="url(#salrA-r5c)" opacity="0.55" transform="rotate(216 48 50)" class="sali-petal p4"></path>
+            <path d="M48 50 C32 34 33 8 48 8 C63 8 64 34 48 50" stroke="url(#salrA-r5c)" opacity="0.42" transform="rotate(288 48 50)" class="sali-petal p5"></path>
+          </g>
+        </svg>
+        <span class="sali-lockup sali-serifcaps"><span>SALI</span><em>AI</em></span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">5C</span>
+      <span class="name">Ribbon rosette</span>
+      <span class="kind">symbole 3D</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+  <article class="card" data-slug="layer-stack">
+    <div class="stage">
+      <span class="sali-brand">
+        <svg class="sali-mark sali-anim-stack" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+          <defs><linearGradient id="salpT" x1="20" y1="14" x2="76" y2="46" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="var(--sali-hi)"></stop><stop offset="1" stop-color="var(--sali-deep)"></stop></linearGradient></defs>
+          <g class="sali-plate pl1">
+            <g transform="translate(48 74) scale(1 .5) rotate(45)"><rect x="-27" y="-27" width="54" height="54" rx="9" fill="var(--sali-ink)" opacity=".22"></rect></g>
+            <g transform="translate(48 68) scale(1 .5) rotate(45)"><rect x="-27" y="-27" width="54" height="54" rx="9" fill="var(--sali-ink)" opacity=".42"></rect></g>
+          </g>
+          <g class="sali-plate pl2">
+            <g transform="translate(48 52) scale(1 .5) rotate(45)"><rect x="-27" y="-27" width="54" height="54" rx="9" fill="var(--sali-deep)"></rect></g>
+            <g transform="translate(48 46) scale(1 .5) rotate(45)"><rect x="-27" y="-27" width="54" height="54" rx="9" fill="var(--sali-accent)"></rect></g>
+          </g>
+          <g class="sali-plate pl3">
+            <g transform="translate(48 30) scale(1 .5) rotate(45)"><rect x="-27" y="-27" width="54" height="54" rx="9" fill="var(--sali-deep)"></rect></g>
+            <g transform="translate(48 24) scale(1 .5) rotate(45)"><rect x="-27" y="-27" width="54" height="54" rx="9" fill="url(#salpT)"></rect></g>
+          </g>
+        </svg>
+        <span class="sali-lockup sali-round"><span>SALI</span><em>AI</em></span>
+      </span>
+    </div>
+    <div class="meta">
+      <span class="badge">5E</span>
+      <span class="name">Layer stack</span>
+      <span class="kind">symbole 3D</span>
+      <button class="replay" type="button">rejouer</button>
+      <button class="work" type="button">is-working</button>
+    </div>
+  </article>
+</div>
+
+<footer>
+  Les animations ne fonctionnent que sur un SVG inline : les fichiers <code>mark-*.svg</code> livrés à côté
+  sont la version statique (favicon, e-mail, bureautique). Chaque dossier contient son
+  <code>INTEGRATION.md</code> avec le prompt d'intégration à coller dans un agent de code.
+</footer>
+
+<script>
+for (const id of ['theme','palette']) {
+  document.getElementById(id).addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    document.documentElement.setAttribute(id === 'theme' ? 'data-theme' : 'data-sali-palette', b.dataset.v);
+    for (const s of e.currentTarget.children) s.setAttribute('aria-pressed', String(s === b));
+  });
+}
+document.querySelectorAll('.card').forEach(card => {
+  const target = card.querySelector('[class*="sali-anim-"]');
+  card.querySelector('.replay').addEventListener('click', () => {
+    const cls = [...target.classList].find(c => c.startsWith('sali-anim-'));
+    target.classList.remove(cls); void target.getBoundingClientRect(); target.classList.add(cls);
+  });
+  const wb = card.querySelector('.work');
+  wb.setAttribute('aria-pressed', 'false');
+  wb.addEventListener('click', () => {
+    const on = target.classList.toggle('is-working');
+    wb.setAttribute('aria-pressed', String(on));
+  });
+});
+</script>
+</body>
+</html>

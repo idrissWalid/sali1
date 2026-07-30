@@ -1,0 +1,91 @@
+/* SALI AI — animations. Ne fonctionnent que sur un SVG INLINE
+   (un <img src="mark.svg"> ne reçoit pas ces règles).
+   Chaque bloc s'active par sa classe sur le <svg class="sali-mark ..."> ou le lockup.
+   Tout est désactivé sous prefers-reduced-motion. */
+
+/* 1B — Resolve */
+.sali-anim-resolve .sali-raw > path { opacity: 0; animation: saliFadeIn .45s ease-out forwards; }
+.sali-anim-resolve .sali-raw > path:nth-child(1) { animation-delay: .05s; }
+.sali-anim-resolve .sali-raw > path:nth-child(2) { animation-delay: .11s; }
+.sali-anim-resolve .sali-raw > path:nth-child(3) { animation-delay: .17s; }
+.sali-anim-resolve .sali-signal { transform-origin: 4px 80px; animation: saliWipe .6s .3s cubic-bezier(.2,.8,.2,1) both; }
+.sali-anim-resolve.is-working .sali-signal { animation: saliScan 1.4s .9s ease-in-out infinite; }
+@keyframes saliWipe { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes saliScan { 0%,100% { transform: scaleX(.25); } 50% { transform: scaleX(1); } }
+
+/* 1C — S-bars */
+.sali-anim-sbars .sali-bar { opacity: 0; animation: saliSlideL .5s cubic-bezier(.2,.8,.2,1) forwards; }
+.sali-anim-sbars .b2, .sali-anim-sbars .b4 { animation-name: saliSlideR; }
+.sali-anim-sbars .b1 { animation-delay: 0s; } .sali-anim-sbars .b2 { animation-delay: .07s; }
+.sali-anim-sbars .b4 { animation-delay: .14s; } .sali-anim-sbars .b5 { animation-delay: .21s; }
+.sali-anim-sbars .b3 { animation-delay: .32s; }
+@keyframes saliSlideL { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+@keyframes saliSlideR { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+
+/* 2B — Ribbon S (tracé) */
+.sali-anim-draw .sali-draw-1, .sali-anim-draw .sali-draw-2 {
+  stroke-dasharray: 100; stroke-dashoffset: 100; animation: saliDraw .7s ease-out forwards; }
+.sali-anim-draw .sali-draw-2 { animation-delay: .55s; }
+.sali-anim-draw.is-working .sali-draw-1, .sali-anim-draw.is-working .sali-draw-2 {
+  animation: saliDrawLoop 2.2s ease-in-out infinite; }
+.sali-anim-draw.is-working .sali-draw-2 { animation-delay: .5s; }
+@keyframes saliDraw { to { stroke-dashoffset: 0; } }
+@keyframes saliDrawLoop { 0% { stroke-dashoffset: 100; } 45%,55% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: -100; } }
+
+/* 2C — Soft stack (dépose) */
+.sali-anim-settle .sali-s1, .sali-anim-settle .sali-s2, .sali-anim-settle .sali-s3 {
+  animation: saliSettle .55s cubic-bezier(.34,1.4,.5,1) both; }
+.sali-anim-settle .sali-s2 { animation-delay: .1s; }
+.sali-anim-settle .sali-s3 { animation-delay: .2s; }
+@keyframes saliSettle { from { opacity: 0; transform: translateY(-10px) scale(.86); } to { opacity: inherit; transform: none; } }
+
+/* 3B / 5C — Rosette */
+.sali-anim-rosette .sali-petal { opacity: 0; animation: saliFadeIn .5s ease-out forwards; }
+.sali-anim-rosette .p1 { animation-delay: 0s; } .sali-anim-rosette .p2 { animation-delay: .09s; }
+.sali-anim-rosette .p3 { animation-delay: .18s; } .sali-anim-rosette .p4 { animation-delay: .27s; }
+.sali-anim-rosette .p5 { animation-delay: .36s; }
+.sali-anim-rosette .sali-spin { transform-origin: 48px 50px; }
+.sali-anim-rosette.is-working .sali-spin { animation: saliSpin 6s linear infinite; }
+.sali-anim-rosette:hover .sali-spin { animation: saliSpin 18s linear infinite; }
+@keyframes saliSpin { to { transform: rotate(360deg); } }
+
+/* 3E — Wave diamond */
+.sali-anim-waves .sali-body { transform-box: fill-box; transform-origin: center;
+  animation: saliQuarter .7s cubic-bezier(.2,.8,.2,1) both; }
+.sali-anim-waves .sali-wave { animation: saliFlow 3.4s ease-in-out infinite; }
+.sali-anim-waves .w2 { animation-delay: -1.7s; }
+@keyframes saliQuarter { from { transform: rotate(-90deg) scale(.7); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes saliFlow { 0%,100% { transform: translateX(-3px); } 50% { transform: translateX(3px); } }
+
+/* 5A — Brushed S (reflet) */
+.sali-anim-sheen .sali-sheen { animation: saliSheen 4s 1.2s ease-in-out infinite; }
+.sali-anim-sheen .sali-blade { transform-box: fill-box; transform-origin: 60% 60%;
+  animation: saliSeat .8s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes saliSheen { 0% { transform: translateX(0); } 40%,100% { transform: translateX(192px); } }
+@keyframes saliSeat { from { transform: rotate(8deg); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* 5E — Layer stack */
+.sali-anim-stack .sali-plate { animation: saliRise .6s cubic-bezier(.2,.8,.2,1) both; }
+.sali-anim-stack .pl2 { animation-delay: .09s; }
+.sali-anim-stack .pl3 { animation-delay: .18s; }
+.sali-anim-stack:hover .pl2 { transform: translateY(-3px); transition: transform .3s; }
+.sali-anim-stack:hover .pl3 { transform: translateY(-7px); transition: transform .3s; }
+@keyframes saliRise { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+
+/* 2A — Wordart pill */
+.sali-anim-pill .sali-pill { animation: saliStretch .55s cubic-bezier(.2,.8,.2,1) both; }
+.sali-anim-pill .sali-ai { animation: saliFadeIn .4s .18s ease-out both; }
+@keyframes saliStretch { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* 3C — filet */
+.sali-anim-rule .sali-underline path { stroke-dasharray: 100; stroke-dashoffset: 100;
+  animation: saliDraw .7s .25s ease-out forwards; }
+.sali-anim-rule:hover .sali-underline path { animation: saliDraw .7s ease-out forwards; }
+
+@keyframes saliFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  [class*="sali-anim-"] *, [class*="sali-anim-"] { animation: none !important; transition: none !important; }
+  .sali-anim-resolve .sali-raw > path, .sali-anim-sbars .sali-bar, .sali-anim-rosette .sali-petal { opacity: 1; }
+  .sali-anim-draw .sali-draw-1, .sali-anim-draw .sali-draw-2, .sali-anim-rule .sali-underline path { stroke-dashoffset: 0; }
+}
