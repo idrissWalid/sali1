@@ -16,7 +16,7 @@ from app.core import config
 
 MAX_DISCRETE_VALUES = 12     # au-delà, une numérique est traitée comme continue
 MAX_DONUT_SLICES = 5         # un anneau reste lisible jusqu'à ~5 parts
-MAX_BAR_CATEGORIES = 25      # au-delà, on agrège la traîne dans « Autres »
+MAX_BAR_CATEGORIES = 25      # au-delà, on agrège la traîne dans « Autres catégories »
 TOP_CATEGORIES = 15
 IDENTIFIER_NAME_PATTERN = re.compile(r"(^|_)(id|uuid|guid|code|ref|reference|email|mail|url|slug)($|_)", re.I)
 
@@ -143,7 +143,7 @@ def _build_histogram(series: pd.Series, target_bins: int = 10) -> list[dict]:
 
 
 def _category_counts(series: pd.Series) -> list[dict]:
-    """Effectifs par catégorie, la traîne étant regroupée dans « Autres ».
+    """Effectifs par catégorie, la traîne étant regroupée séparément.
 
     Le nettoyage est refait ici, APRÈS `astype(str)`, plutôt que supposé fait par
     l'appelant : la conversion en texte transforme tout manquant résiduel en
@@ -155,7 +155,9 @@ def _category_counts(series: pd.Series) -> list[dict]:
     if len(counts) > MAX_BAR_CATEGORIES:
         head = counts.head(TOP_CATEGORIES)
         data = [{"name": str(k), "value": int(v)} for k, v in head.items()]
-        data.append({"name": "Autres", "value": int(counts.iloc[TOP_CATEGORIES:].sum())})
+        # Ce libellé ne désigne que les catégories observées les moins fréquentes.
+        # Les valeurs manquantes ont été retirées avant ce comptage.
+        data.append({"name": "Autres catégories", "value": int(counts.iloc[TOP_CATEGORIES:].sum())})
         return data
     return [{"name": str(k), "value": int(v)} for k, v in counts.items()]
 
@@ -512,6 +514,71 @@ async def interpret_variable(
 
     _variable_interpretation_cache[cache_key] = interpretation
     return {"variable": variable, "interpretation": interpretation, "cached": False}
+
+
+async def answer_dashboard_question(
+    session_id: str,
+    variable: str,
+    question: str,
+    dataset_id: str | None = None,
+    model: str | None = None,
+) -> dict:
+    """Répond à une question en restant strictement dans le contexte du graphique."""
+    from app.services.session_service import get_dataset, list_datasets
+    from app.services.gemini_service import complete_text
+
+    question = question.strip()
+    if not question:
+        return {"error": "La question ne peut pas être vide."}
+    if len(question) > 1000:
+        return {"error": "La question est trop longue (1 000 caractères maximum)."}
+
+    available = list_datasets(session_id)
+    if not available:
+        return {"error": "Session ou jeu de données introuvable."}
+
+    known_ids = {item["id"] for item in available}
+    if dataset_id not in known_ids:
+        dataset_id = available[0]["id"]
+
+    _, _, _, stats = get_dataset(session_id, dataset_id)
+    stats = stats or {}
+    variables = stats.get("variables", {})
+    var_stats = variables.get(variable)
+    if var_stats is None:
+        return {"error": f"Variable « {variable} » introuvable dans ce jeu de données."}
+
+    overview = stats.get("dataset_overview", {})
+    interpretation_result = await interpret_variable(
+        session_id, variable, dataset_id=dataset_id, model=model
+    )
+    interpretation = interpretation_result.get("interpretation", "")
+    prompt = f"""Tu es un analyste de données. Réponds en français à la question de l'utilisateur au sujet du graphique affiché dans son dashboard.
+
+Variable représentée : « {variable} »
+Nombre total de lignes : {overview.get("n_lignes") or overview.get("n_rows") or "?"}
+Statistiques qui ont servi à construire le graphique :
+{json.dumps(var_stats, ensure_ascii=False, indent=2)}
+
+Interprétation déjà affichée :
+{interpretation or "Aucune interprétation disponible."}
+
+Question : {question}
+
+Consignes STRICTES :
+- Réponds directement et clairement en 2 à 5 phrases.
+- Appuie-toi uniquement sur les informations fournies ci-dessus et n'invente aucun chiffre.
+- Si le graphique et les statistiques ne permettent pas de répondre, dis-le explicitement et indique brièvement quelle donnée serait nécessaire.
+- Ne prétends pas voir d'autres variables ou éléments du jeu de données.
+"""
+    try:
+        answer = (await asyncio.to_thread(
+            complete_text, prompt, model or config.get_default_model()
+        )).strip()
+    except Exception as exc:
+        return {"error": f"Impossible de répondre à la question : {exc}"}
+
+    return {"variable": variable, "question": question, "answer": answer}
 
 
 async def get_dashboard_data(session_id: str, dataset_id: str | None = None) -> dict:

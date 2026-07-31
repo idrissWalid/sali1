@@ -1,5 +1,6 @@
 import torch  # Import torch first to avoid DLL initialization error (WinError 1114)
 from fastapi import FastAPI, Request
+from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.api.chat import router as chat_router
@@ -104,6 +105,32 @@ async def interpret_dashboard_variable(
     result = await interpret_variable(session_id, variable, dataset_id=dataset_id, model=model)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+class DashboardQuestionRequest(BaseModel):
+    variable: str
+    question: str
+    dataset_id: str | None = None
+    model: str | None = None
+
+
+@app.post("/api/dashboard/question/{session_id}")
+async def ask_dashboard_question(session_id: str, request: DashboardQuestionRequest):
+    """Question contextuelle portant uniquement sur le graphique sélectionné."""
+    from app.services.analysis_service import answer_dashboard_question
+    from fastapi import HTTPException
+
+    result = await answer_dashboard_question(
+        session_id,
+        request.variable,
+        request.question,
+        dataset_id=request.dataset_id,
+        model=request.model,
+    )
+    if "error" in result:
+        status = 400 if "vide" in result["error"] or "longue" in result["error"] else 404
+        raise HTTPException(status_code=status, detail=result["error"])
     return result
 
 

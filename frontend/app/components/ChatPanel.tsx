@@ -826,7 +826,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                       {renderMarkdown(msg.text, sendMessage, "content", msg.sources, setSelectedSource)}
                       {msg.isSummary && (
                         <button
-                          onClick={() => window.open(`${API_URL}/api/dashboard/${sessionId}`, "_blank")}
+                          onClick={() => window.open(`/dashboard/${sessionId}`, "_blank", "noopener,noreferrer")}
                           style={{
                             marginTop: "16px",
                             padding: "10px 16px",

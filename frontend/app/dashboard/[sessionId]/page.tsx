@@ -7,7 +7,7 @@ import {
   BarChart, Bar, PieChart, Pie, LineChart, Line, XAxis, YAxis, 
   CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell 
 } from "recharts";
-import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy, Sun, Moon, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy, Sun, Moon, Sparkles, Send, MessageCircleQuestion } from "lucide-react";
 import { API_URL } from "@/lib/api";
 
 // Colors for charts
@@ -72,6 +72,12 @@ export default function DashboardPage() {
   const [interpretation, setInterpretation] = useState<string>("");
   const [interpretLoading, setInterpretLoading] = useState(false);
   const [interpretError, setInterpretError] = useState("");
+  const [chartQuestion, setChartQuestion] = useState("");
+  const [chartConversation, setChartConversation] = useState<
+    { context: string; question: string; answer: string }[]
+  >([]);
+  const [questionLoading, setQuestionLoading] = useState(false);
+  const [questionError, setQuestionError] = useState<{ context: string; text: string } | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -110,6 +116,10 @@ export default function DashboardPage() {
     setInterpretation("");
     setInterpretError("");
     setInterpretLoading(Boolean(sessionId && selectedVar && data));
+    setChartQuestion("");
+    setChartConversation([]);
+    setQuestionError(null);
+    setQuestionLoading(false);
   }
 
   useEffect(() => {
@@ -195,6 +205,47 @@ export default function DashboardPage() {
     : 0;
 
   const datasets = data.datasets ?? [];
+
+  const handleChartQuestion = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const question = chartQuestion.trim();
+    if (!question || !selectedVar || questionLoading) return;
+
+    setQuestionLoading(true);
+    setQuestionError(null);
+    const questionContext = cleInterpretation;
+    try {
+      const model = localStorage.getItem("selected_model") || undefined;
+      const res = await fetch(`${API_URL}/api/dashboard/question/${sessionId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          variable: selectedVar,
+          question,
+          dataset_id: data.dataset_id || undefined,
+          model,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.detail || "Impossible de répondre à cette question.");
+      setChartConversation((current) => [
+        ...current,
+        {
+          context: questionContext,
+          question,
+          answer: json.answer || "Aucune réponse disponible.",
+        },
+      ]);
+      setChartQuestion("");
+    } catch (err) {
+      setQuestionError({
+        context: questionContext,
+        text: err instanceof Error ? err.message : "Impossible de répondre à cette question.",
+      });
+    } finally {
+      setQuestionLoading(false);
+    }
+  };
 
   return (
     <div className="dashboard-shell min-h-screen w-full bg-gray-50 dark:bg-[#111] text-gray-900 dark:text-gray-100 font-sans">
@@ -287,9 +338,23 @@ export default function DashboardPage() {
           {/* Right Column: Chart Display */}
           <div className="dashboard-panel dashboard-chart lg:col-span-2 bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm flex flex-col">
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                {activeDist?.type === "timeseries" ? "Évolution temporelle de" : "Distribution de"} <span className="text-blue-500">{selectedVar}</span>
-              </h2>
+              <div className="flex flex-wrap items-center gap-3">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  {activeDist?.type === "timeseries" ? "Évolution temporelle de" : "Distribution de"} <span className="text-blue-500">{selectedVar}</span>
+                </h2>
+                {activeDist && (
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      (activeDist.pct_missing ?? 0) > 0
+                        ? "bg-orange-50 text-orange-700 dark:bg-orange-950/30 dark:text-orange-300"
+                        : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+                    }`}
+                    title={`${(activeDist.n_missing ?? 0).toLocaleString("fr-FR")} valeur${(activeDist.n_missing ?? 0) > 1 ? "s" : ""} manquante${(activeDist.n_missing ?? 0) > 1 ? "s" : ""}, exclue${(activeDist.n_missing ?? 0) > 1 ? "s" : ""} du graphique`}
+                  >
+                    Valeurs manquantes : {activeDist.pct_missing ?? 0} %
+                  </span>
+                )}
+              </div>
 
               {/* Choix de l'échelle temporelle : toutes les granularités sont
                   déjà chargées, la bascule est donc immédiate. */}
@@ -312,17 +377,6 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
-
-            {/* Les manquants ne sont pas une modalité : ils sont exclus du
-                graphique, et leur volume est annoncé ici plutôt que noyé dans
-                une part « Autres » indiscernable d'une vraie catégorie. */}
-            {(activeDist?.n_missing ?? 0) > 0 && (
-              <p className="-mt-4 mb-5 text-xs text-gray-500 dark:text-gray-400">
-                {(activeDist?.n_missing ?? 0).toLocaleString("fr-FR")} ligne
-                {(activeDist?.n_missing ?? 0) > 1 ? "s" : ""} sans valeur ({activeDist?.pct_missing ?? 0}%)
-                {" "}exclue{(activeDist?.n_missing ?? 0) > 1 ? "s" : ""} du graphique.
-              </p>
-            )}
 
             <div className="dashboard-chart-canvas flex-1 w-full">
               {!activeDist || chartData.length === 0 ? (
@@ -483,6 +537,57 @@ export default function DashboardPage() {
                   Sélectionnez une variable pour afficher son interprétation.
                 </p>
               )}
+
+              <div className="mt-8 rounded-2xl border border-blue-100 bg-blue-50/40 p-5 dark:border-blue-900/50 dark:bg-blue-950/20 sm:p-6">
+                <div className="mb-5 flex items-center gap-2">
+                  <MessageCircleQuestion className="h-4 w-4 text-blue-500" />
+                  <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+                    Une question sur ce graphique ?
+                  </p>
+                </div>
+
+                <div className="space-y-4" aria-live="polite">
+                  {chartConversation
+                    .filter((exchange) => exchange.context === cleInterpretation)
+                    .map((exchange, index) => (
+                      <div key={`${exchange.context}-${index}`} className="space-y-2">
+                        <div className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-blue-500 px-4 py-3 text-sm leading-relaxed text-white">
+                          {exchange.question}
+                        </div>
+                        <div className="max-w-[92%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-sm leading-relaxed text-gray-700 shadow-sm dark:bg-[#202020] dark:text-gray-300">
+                          {exchange.answer}
+                        </div>
+                      </div>
+                    ))}
+                  {questionError?.context === cleInterpretation && (
+                    <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 dark:bg-red-950/20 dark:text-red-400">
+                      {questionError.text}
+                    </p>
+                  )}
+                </div>
+
+                <form onSubmit={handleChartQuestion} className="mt-8 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+                  <label htmlFor="chart-question" className="sr-only">Question sur le graphique</label>
+                  <input
+                    type="text"
+                    id="chart-question"
+                    value={chartQuestion}
+                    onChange={(event) => setChartQuestion(event.target.value)}
+                    placeholder={`Ex. : Que signifie cette distribution pour « ${selectedVar} » ?`}
+                    maxLength={1000}
+                    disabled={!selectedVar || questionLoading}
+                    className="h-10 min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3.5 text-sm leading-5 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-[#181818] dark:focus:border-blue-600 dark:focus:ring-blue-950"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!chartQuestion.trim() || !selectedVar || questionLoading}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-500 px-4 text-sm font-semibold text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {questionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    {questionLoading ? "Analyse…" : "Demander"}
+                  </button>
+                </form>
+              </div>
             </div>
           </div>
         </div>
