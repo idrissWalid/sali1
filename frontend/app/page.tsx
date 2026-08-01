@@ -153,7 +153,7 @@ export default function Home() {
           {
             name: data.filename,
             type: data.type === "tabular" ? "tabular" : "document",
-            meta: data.type === "tabular" ? "Données tabulaires" : "Document PDF/Word",
+            meta: data.type === "tabular" ? "Données tabulaires" : "Document",
           }
         ]);
         setLeftTab("sources");
@@ -217,7 +217,7 @@ export default function Home() {
     const newSource: Source = {
       name: data.filename || data.profile?.filename || "Source",
       type: data.type === "tabular_analyzed" ? "tabular" : "document",
-      meta: data.type === "tabular_analyzed" ? "Données tabulaires" : "Document PDF/Word",
+      meta: data.type === "tabular_analyzed" ? "Données tabulaires" : "Document",
     };
     setSources(s => [...s, newSource]);
     setLeftTab("sources");

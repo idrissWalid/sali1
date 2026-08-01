@@ -110,12 +110,12 @@
 .theme-toggle-button:hover { color: var(--text-main); transform: scale(1.05); }
 .theme-toggle-button:active { transform: scale(0.95); }
 .theme-toggle-button svg { display: block; width: 20px; height: 20px; overflow: visible; }
-@keyframes sali-ring-spin { to { transform: rotate(360deg); } }
-.sali-loading-ring {
-  animation: sali-ring-spin 2s linear infinite;
-  transform-box: fill-box; transform-origin: center;
+@keyframes sali-dot-orbit { to { transform: rotate(360deg); } }
+.sali-loading-dot {
+  animation: sali-dot-orbit 2s linear infinite;
+  transform-origin: 50px 53.8px;
 }
-@media (prefers-reduced-motion: reduce) { .sali-loading-ring { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .sali-loading-dot { animation: none; } }
 
 /* Hourglass animation */
 @keyframes hourglass-spin {

@@ -1,9 +1,10 @@
 """supervised_pipeline.py — Orchestrateur du tournoi supervisé.
 
-L'utilisateur ne choisit pas de modèle : la famille est déduite de la cible
-(continue → régression ; catégorielle → classification ; minorité < 20 % →
-classification déséquilibrée), les modèles de la famille sont mis en concurrence
-dans le sandbox, et le meilleur est livré.
+Sans choix explicite, la famille est déduite de la cible (continue → régression ;
+catégorielle → classification ; minorité < 20 % → classification déséquilibrée),
+les modèles de la famille sont mis en concurrence et le meilleur est livré. Si
+l'utilisateur impose un modèle ou des paramètres, le tournoi est désactivé : un
+seul estimateur est exécuté avec la configuration validée.
 
 Le seul apport du LLM ici est d'identifier la colonne cible dans la question —
 tâche étroite et vérifiable (le nom doit exister dans le jeu de données). Tout le
@@ -103,6 +104,8 @@ def run_supervised_tournament(
     target: str | None = None,
     features: list[str] | None = None,
     budget: int | None = None,
+    requested_model: str | None = None,
+    hyperparameters: dict | None = None,
 ) -> dict:
     """Met les modèles de la famille en concurrence et persiste le meilleur.
 
@@ -123,6 +126,20 @@ def run_supervised_tournament(
 
     if not file_bytes:
         return echec("Aucun jeu de données disponible.")
+
+    try:
+        from app.services.model_request_service import (
+            ModelRequest, parse_model_request, validate_model_request,
+        )
+        parsed = parse_model_request(question)
+        request_config = ModelRequest(
+            model=requested_model or parsed.model,
+            hyperparameters={**parsed.hyperparameters, **(hyperparameters or {})},
+            unsupported_parameters=parsed.unsupported_parameters,
+        )
+        validate_model_request(request_config)
+    except ValueError as exc:
+        return echec(str(exc), "Configuration d'entraînement invalide.")
 
     try:
         df = _charger_df(file_bytes, filename)
@@ -148,8 +165,22 @@ def run_supervised_tournament(
     if not explicatives:
         return echec("Aucune variable explicative exploitable.", "Liste de features vide.")
 
-    logger.info("Tournoi supervisé : cible=%s, %d variables", cible, len(explicatives))
-    code = build_supervised_code(cible, explicatives, budget=budget or BUDGET_SECONDES)
+    pipeline_params = dict(request_config.hyperparameters)
+    test_size = pipeline_params.pop("test_size", 0.25)
+    random_state = pipeline_params.pop("random_state", 42)
+    logger.info(
+        "Entraînement supervisé : cible=%s, variables=%d, modèle=%s, paramètres=%s",
+        cible, len(explicatives), request_config.model or "tournoi", pipeline_params,
+    )
+    code = build_supervised_code(
+        cible,
+        explicatives,
+        budget=budget or BUDGET_SECONDES,
+        requested_model=request_config.model,
+        hyperparameters=pipeline_params,
+        test_size=test_size,
+        random_state=random_state,
+    )
     result = execute_code(code, dataframe_bytes=file_bytes, filename=filename)
 
     if result.get("error"):
@@ -224,6 +255,12 @@ def run_supervised_tournament(
         f"Le rapport complet (hypothèses testées, comparaison des modèles) est "
         f"disponible dans les modèles générés."
     )
+    if request_config.model:
+        response = (
+            f"**Configuration imposée respectée** : `{request_config.model}`"
+            f"{f' avec {request_config.hyperparameters}' if request_config.hyperparameters else ''}.\n\n"
+            + response
+        )
 
     return {"ok": True, "response": response, "images": result.get("images", []),
             "model_id": model_id, "report": rapport, "error": None}

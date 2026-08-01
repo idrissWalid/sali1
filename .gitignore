@@ -36,6 +36,8 @@ backend/*.zip
 # Rapports générés par backend/eval_server.py (harnais d'évaluation manuel) —
 # artefacts de sortie, pas du code source.
 backend/eval_report_*.pdf
+backend/eval_insighteval_*.json
+backend/eval_insighteval_report_*.pdf
 
 
 # Runtime Data (generated at runtime, not source code)
@@ -44,6 +46,7 @@ data/sessions.db
 data/uploads/
 data/visual_docs/
 data/models/
+data/insighteval/
 cache.db
 backend/cache.db
 

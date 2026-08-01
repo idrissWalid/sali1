@@ -1,6 +1,7 @@
 import io
 import os
 import uuid
+from pathlib import Path
 
 import numpy as np
 from pypdf import PdfReader
@@ -92,6 +93,41 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
     return "\n\n".join(text_parts).strip()
 
+
+def _decode_text_document(file_bytes: bytes) -> str:
+    """Décode un document texte en acceptant les encodages usuels."""
+    encodings = ["utf-8-sig"]
+    if file_bytes.startswith((b"\xff\xfe", b"\xfe\xff")):
+        encodings.append("utf-16")
+    encodings.extend(("cp1252", "latin-1"))
+    for encoding in encodings:
+        try:
+            return file_bytes.decode(encoding).replace("\x00", "").strip()
+        except UnicodeDecodeError:
+            continue
+    return file_bytes.decode("utf-8", errors="replace").replace("\x00", "").strip()
+
+
+def extract_text_from_document(file_bytes: bytes, filename: str) -> str:
+    """Extrait le texte des formats documentaires acceptés par l'application."""
+    ext = Path(filename).suffix.lower()
+    if ext == ".pdf":
+        return extract_text_from_pdf(file_bytes)
+    if ext in {".md", ".tex"}:
+        return _decode_text_document(file_bytes)
+    if ext == ".docx":
+        from docx import Document
+
+        document = Document(io.BytesIO(file_bytes))
+        parts = [paragraph.text.strip() for paragraph in document.paragraphs if paragraph.text.strip()]
+        for table in document.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells]
+                if any(cells):
+                    parts.append(" | ".join(cells))
+        return "\n\n".join(parts).strip()
+    raise ValueError(f"Format documentaire non supporté : {ext or 'sans extension'}")
+
 def chunk_page_text(page_text: str, page_number: int, chunk_size: int = 400, overlap: int = 50) -> list:
     words = page_text.split()
     chunks = []
@@ -114,7 +150,7 @@ def index_document(session_id: str, file_bytes: bytes, filename: str, text: str 
     """
     try:
         all_chunks = []
-        extracted_text = text if text is not None else extract_text_from_pdf(file_bytes)
+        extracted_text = text if text is not None else extract_text_from_document(file_bytes, filename)
         if extracted_text.strip():
             all_chunks = chunk_page_text(extracted_text, 1)
 
@@ -123,7 +159,7 @@ def index_document(session_id: str, file_bytes: bytes, filename: str, text: str 
                 "status": "ok",
                 "chunks_indexed": 0,
                 "filename": filename,
-                "message": "Aucun texte extractible dans ce PDF."
+                "message": "Aucun texte extractible dans ce document."
             }
 
         if chroma_client is None:

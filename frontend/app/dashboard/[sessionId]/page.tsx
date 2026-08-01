@@ -16,7 +16,16 @@ const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'
 // Formatte les valeurs de l'axe Y de façon compacte (1200 -> "1,2k") pour éviter
 // les libellés à rallonge qui se chevauchent, et arrondit le bruit flottant.
 const formatAxisNumber = (value: number) =>
-  new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+  new Intl.NumberFormat("fr-FR", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+
+const formatDecimal = (value: number) =>
+  new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 }).format(value);
+
+const formatDisplayValue = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? formatDecimal(value) : String(value);
+
+const formatTooltipValue = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? formatDecimal(value) : String(value ?? "");
 
 // Sur un axe temporel proportionnel, la granularité des libellés doit suivre
 // l'amplitude réellement couverte : afficher une date complète sur dix ans est
@@ -291,7 +300,7 @@ export default function DashboardPage() {
         <div className="dashboard-stats grid grid-cols-2 md:grid-cols-4">
           <StatCard title="Lignes" value={overview.n_lignes?.toLocaleString() ?? 0} icon={Rows3} />
           <StatCard title="Colonnes" value={overview.n_colonnes?.toLocaleString() ?? 0} icon={Columns3} />
-          <StatCard title="Valeurs manquantes" value={`${overview.pct_valeurs_manquantes_total ?? 0}%`} icon={AlertTriangle} />
+          <StatCard title="Valeurs manquantes" value={`${formatDecimal(overview.pct_valeurs_manquantes_total ?? 0)} %`} icon={AlertTriangle} />
           <StatCard title="Doublons" value={overview.n_doublons?.toLocaleString() ?? 0} icon={Copy} />
         </div>
 
@@ -351,7 +360,7 @@ export default function DashboardPage() {
                     }`}
                     title={`${(activeDist.n_missing ?? 0).toLocaleString("fr-FR")} valeur${(activeDist.n_missing ?? 0) > 1 ? "s" : ""} manquante${(activeDist.n_missing ?? 0) > 1 ? "s" : ""}, exclue${(activeDist.n_missing ?? 0) > 1 ? "s" : ""} du graphique`}
                   >
-                    Valeurs manquantes : {activeDist.pct_missing ?? 0} %
+                    Valeurs manquantes : {formatDecimal(activeDist.pct_missing ?? 0)} %
                   </span>
                 )}
               </div>
@@ -404,6 +413,7 @@ export default function DashboardPage() {
                       ))}
                     </Pie>
                     <Tooltip
+                      formatter={formatTooltipValue}
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
                       itemStyle={{ color: '#fff' }}
                     />
@@ -429,6 +439,7 @@ export default function DashboardPage() {
                       interval={0}
                     />
                     <Tooltip
+                      formatter={formatTooltipValue}
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
                       itemStyle={{ color: '#fff' }}
                       cursor={{fill: 'rgba(255,255,255,0.1)'}}
@@ -462,6 +473,7 @@ export default function DashboardPage() {
                       width={56}
                     />
                     <Tooltip
+                      formatter={formatTooltipValue}
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
                       itemStyle={{ color: '#fff' }}
                       cursor={{fill: 'rgba(255,255,255,0.1)'}}
@@ -501,6 +513,7 @@ export default function DashboardPage() {
                       width={56}
                     />
                     <Tooltip
+                      formatter={formatTooltipValue}
                       contentStyle={{ borderRadius: '12px', border: '1px solid #333', background: 'rgba(20,20,20,0.9)', color: '#fff' }}
                       labelFormatter={(label: React.ReactNode) =>
                         hasTimestamps && (typeof label === "number" || typeof label === "string")
@@ -609,7 +622,7 @@ export default function DashboardPage() {
                   <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-white/5 transition">
                     {Object.values(row).map((val: unknown, j: number) => (
                       <td key={j} className="px-6 py-4 whitespace-nowrap text-gray-700 dark:text-gray-400">
-                        {val === null ? <span className="text-gray-400 italic">null</span> : String(val)}
+                        {val === null ? <span className="text-gray-400 italic">null</span> : formatDisplayValue(val)}
                       </td>
                     ))}
                   </tr>

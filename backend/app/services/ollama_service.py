@@ -41,9 +41,28 @@ def _trim_prompt(prompt: str, limit: int = MAX_PROMPT_CHARS) -> str:
     )
 
 
-def _generate(model: str, prompt: str, num_ctx: int, num_predict: int, num_gpu: int | None = -999) -> str:
+def _prompt_budget(limit: int, system: str | None) -> int:
+    """Budget de caractères laissé au prompt utilisateur, système décompté.
+
+    Le prompt système voyage dans son propre champ, mais il occupe la MÊME fenêtre
+    de contexte que le prompt : sans cette soustraction, le renseigner augmenterait
+    le total envoyé et pousserait la requête au-delà de `num_ctx`. Le plancher
+    garantit qu'un prompt système anormalement long ne fait pas disparaître la
+    question de l'utilisateur.
+    """
+    return max(2000, limit - len(system or ""))
+
+
+def _generate(model: str, prompt: str, num_ctx: int, num_predict: int, num_gpu: int | None = -999,
+              system: str | None = None) -> str:
     """Un appel Ollama. `num_gpu` vaut par défaut le réglage global ; passer une
-    valeur explicite (0 = CPU) permet de rejouer la requête en mode dégradé."""
+    valeur explicite (0 = CPU) permet de rejouer la requête en mode dégradé.
+
+    `system` part dans le champ dédié de `/api/generate` au lieu d'être concaténé
+    au prompt : Ollama l'injecte alors à l'emplacement que le gabarit de
+    conversation du modèle réserve aux consignes, et il échappe au
+    raccourcissement de `_trim_prompt`.
+    """
     effective_num_gpu = OLLAMA_NUM_GPU if num_gpu == -999 else num_gpu
 
     options = {"num_ctx": num_ctx, "num_predict": num_predict}
@@ -62,7 +81,9 @@ def _generate(model: str, prompt: str, num_ctx: int, num_predict: int, num_gpu: 
         "think": False,
         "options": options,
     }
-    logger.debug("Ollama request: model=%s num_ctx=%d num_predict=%d num_gpu=%s prompt_len=%d", model, num_ctx, num_predict, effective_num_gpu, len(prompt))
+    if system:
+        payload["system"] = system
+    logger.debug("Ollama request: model=%s num_ctx=%d num_predict=%d num_gpu=%s prompt_len=%d system_len=%d", model, num_ctx, num_predict, effective_num_gpu, len(prompt), len(system or ""))
     try:
         response = requests.post(OLLAMA_API_URL, json=payload, timeout=180)
         logger.debug("Ollama HTTP %s response (truncated 1000 chars): %s", response.status_code, response.text[:1000])
@@ -85,7 +106,7 @@ def _error_detail(error: Exception) -> str:
     return str(error)
 
 
-def ask_ollama(prompt: str, model: str | None = None) -> str:
+def ask_ollama(prompt: str, model: str | None = None, system: str | None = None) -> str:
     """Interroge Ollama en dégradant progressivement en cas d'échec.
 
     Sur une machine dont le GPU ne peut pas accueillir le modèle demandé, Ollama
@@ -93,13 +114,18 @@ def ask_ollama(prompt: str, model: str | None = None) -> str:
     (connexion coupée). On rejoue alors la requête sur le CPU avec le MÊME
     modèle — ce qui préserve le choix de l'utilisateur — avant d'envisager un
     modèle de secours plus petit.
+
+    `system` accompagne les quatre tentatives : les consignes ne doivent pas
+    disparaître au premier repli, sinon la réponse dégradée change aussi de langue
+    et de format.
     """
     selected_model = (model or DEFAULT_OLLAMA_MODEL).strip()
-    safe_prompt = _trim_prompt(prompt)
+    safe_prompt = _trim_prompt(prompt, _prompt_budget(MAX_PROMPT_CHARS, system))
+    prompt_reduit = _trim_prompt(safe_prompt, _prompt_budget(7500, system))
 
     # 1. Réglage nominal (GPU non bridé si OLLAMA_NUM_GPU=auto).
     try:
-        return _generate(selected_model, safe_prompt, num_ctx=4096, num_predict=512)
+        return _generate(selected_model, safe_prompt, num_ctx=4096, num_predict=512, system=system)
     except requests.RequestException as error:
         last_error = error
         logger.warning("Ollama : échec nominal pour %s (%s).", selected_model, _error_detail(error)[:200])
@@ -107,7 +133,7 @@ def ask_ollama(prompt: str, model: str | None = None) -> str:
     # 2. Même modèle, forcé sur CPU.
     try:
         logger.warning("Ollama : repli CPU pour %s.", selected_model)
-        return _generate(selected_model, safe_prompt, num_ctx=4096, num_predict=512, num_gpu=0)
+        return _generate(selected_model, safe_prompt, num_ctx=4096, num_predict=512, num_gpu=0, system=system)
     except requests.RequestException as error:
         last_error = error
 
@@ -115,10 +141,11 @@ def ask_ollama(prompt: str, model: str | None = None) -> str:
     try:
         return _generate(
             selected_model,
-            _trim_prompt(safe_prompt, limit=7500),
+            prompt_reduit,
             num_ctx=2048,
             num_predict=384,
             num_gpu=0,
+            system=system,
         )
     except requests.RequestException as error:
         last_error = error
@@ -131,10 +158,11 @@ def ask_ollama(prompt: str, model: str | None = None) -> str:
             logger.warning("Ollama : bascule sur le modèle de secours %s.", fallback_model)
             return _generate(
                 fallback_model,
-                _trim_prompt(safe_prompt, limit=7500),
+                prompt_reduit,
                 num_ctx=2048,
                 num_predict=384,
                 num_gpu=0,
+                system=system,
             )
         except requests.RequestException:
             continue

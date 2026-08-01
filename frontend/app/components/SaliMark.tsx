@@ -27,9 +27,8 @@ export function SaliLoadingMark({ size = 30 }: { size?: number }) {
   return (
     <svg aria-label="Sali AI réfléchit" height={size} role="img" style={{ display: "block", flexShrink: 0 }}
       viewBox="0 0 100 100" width={size} xmlns="http://www.w3.org/2000/svg">
-      <circle className="sali-loading-ring" cx="50" cy="53.8" fill="none" r="37" stroke="#7A8A5E"
-        strokeDasharray="175 58" strokeLinecap="round" strokeWidth="10.9" />
-      <circle cx="79.4" cy="15.7" fill="#C67139" r="12" />
+      <circle cx="50" cy="53.8" fill="none" r="37" stroke="#7A8A5E" strokeWidth="10.9" />
+      <circle className="sali-loading-dot" cx="79.4" cy="15.7" fill="#C67139" r="12" />
     </svg>
   );
 }

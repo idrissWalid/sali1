@@ -137,23 +137,26 @@ async def upload_file(
         if file_type == "unsupported":
             yield json.dumps({
                 "status": "error",
-                "message": "Format non supporté. Utilisez CSV, Excel ou PDF.",
+                "message": "Format non supporté. Utilisez CSV, Excel, PDF, DOCX, Markdown ou LaTeX.",
                 "technical": "Unsupported file format"
             }) + "\n"
             return
 
         if file_type == "document":
+            embedded_table_df = None
+            is_pdf = Path(filename).suffix.lower() == ".pdf"
             yield json.dumps({
                 "status": "processing",
                 "step": 1,
-                "message": "Recherche d'un tableau de données dans le PDF..."
+                "message": "Lecture du document..."
             }) + "\n"
             await asyncio.sleep(0.05)
 
-            try:
-                embedded_table_df = await asyncio.to_thread(extract_table_from_pdf, file_bytes)
-            except Exception:
-                embedded_table_df = None
+            if is_pdf:
+                try:
+                    embedded_table_df = await asyncio.to_thread(extract_table_from_pdf, file_bytes)
+                except Exception:
+                    embedded_table_df = None
 
             extracted_df = embedded_table_df
             if extracted_df is not None:
@@ -353,8 +356,8 @@ async def upload_file(
             await asyncio.sleep(0.05)
 
             try:
-                from app.services.rag_service import extract_text_from_pdf
-                raw_context = await asyncio.to_thread(extract_text_from_pdf, file_bytes)
+                from app.services.rag_service import extract_text_from_document
+                raw_context = await asyncio.to_thread(extract_text_from_document, file_bytes, filename)
                 if index_doc.lower() == "true" and chunks_indexed > 0:
                     indexed_context = await asyncio.to_thread(summarize_document, session_id, model=model)
                     if indexed_context.strip():
@@ -363,6 +366,13 @@ async def upload_file(
                     raw_context = " ".join(raw_context.split()[:2400])  # Prend environ le même nombre de mots que 6 chunks
 
                 if not raw_context.strip():
+                    if Path(filename).suffix.lower() != ".pdf":
+                        yield json.dumps({
+                            "status": "error",
+                            "message": "Ce document ne contient aucun texte lisible.",
+                            "technical": f"Empty document: {filename}",
+                        }) + "\n"
+                        return
                     # Aucun texte extractible (scan/photo). On tente d'abord un OCR
                     # local : s'il aboutit, le document redevient un document texte
                     # ordinaire, exploitable par n'importe quel modèle (y compris un

@@ -107,7 +107,7 @@ def _nice_step(raw_step: float) -> float:
 
 def _format_bound(value: float, step: float) -> str:
     """Formate une borne avec juste assez de décimales pour rester distincte."""
-    decimals = 0 if step >= 1 else min(6, int(abs(math.floor(math.log10(step)))) + 1)
+    decimals = 0 if step >= 1 else min(2, int(abs(math.floor(math.log10(step)))) + 1)
     return f"{value:,.{decimals}f}".replace(",", " ").replace(".", ",")
 
 
@@ -300,11 +300,18 @@ def convert_types(obj):
     return obj
 
 
-def build_analysis_prompt(profile: dict, stats: dict) -> str:
+def build_analysis_prompt(profile: dict, stats: dict, model: str | None = None) -> str:
     """
     Construit le prompt d'analyse à partir du profil de base
     et des statistiques ydata-profiling.
+
+    L'aperçu est borné au budget du modèle choisi (voir `prompt_budget`) : c'est de
+    loin le poste le plus lourd du prompt — 83,5 % sur le pire cas du corpus, où
+    cinq corps d'articles pèsent 17 836 caractères sans rien apprendre de plus sur
+    la structure du fichier.
     """
+    from app.services.prompt_budget import bloc_apercu, profil_modele
+
     overview = stats.get("dataset_overview", {})
     variables = stats.get("variables", {})
     missing = stats.get("missing", {})
@@ -379,7 +386,7 @@ CORRÉLATIONS :
 {json.dumps(correlations, ensure_ascii=False, indent=2) if correlations else "Non calculées."}
 
 APERÇU DES DONNÉES (5 premières lignes) :
-{json.dumps(profile['preview'], ensure_ascii=False, indent=2)}
+{bloc_apercu(profile.get('preview'), budget=profil_modele(model).budget_contexte // 3)}
 
 Rédige une analyse en français de manière claire et accessible.
 Ne commence JAMAIS l'analyse par des formules d'introduction ou des salutations clichées/répétitives (par exemple : "Bonjour", "En tant qu'expert en analyse de données, voici...", "En tant qu'agent...", "Voici le résultat de..."). Rentre directement dans le sujet.
@@ -433,7 +440,7 @@ async def analyze_tabular(
     # Utilisation de ydata-profiling pour les statistiques descriptives
     stats = await asyncio.to_thread(generate_profiling_stats, df)
     if with_interpretation:
-        prompt = build_analysis_prompt(profile, stats)
+        prompt = build_analysis_prompt(profile, stats, model=model)
         interpretation = await asyncio.to_thread(ask_gemini, prompt, model=model)
     else:
         interpretation = ""
@@ -468,6 +475,7 @@ Consignes STRICTES :
 - Si une valeur manquante est élevée (>10%) ou un déséquilibre marqué existe, signale-le.
 - Termine par une courte implication analytique concrète si pertinent (ex: "à normaliser avant modélisation", "catégorie sur-représentée à surveiller").
 - N'invente aucun chiffre : appuie-toi uniquement sur les statistiques fournies.
+- Arrondis toute valeur décimale à deux chiffres maximum après la virgule.
 """
 
 
@@ -570,6 +578,7 @@ Consignes STRICTES :
 - Appuie-toi uniquement sur les informations fournies ci-dessus et n'invente aucun chiffre.
 - Si le graphique et les statistiques ne permettent pas de répondre, dis-le explicitement et indique brièvement quelle donnée serait nécessaire.
 - Ne prétends pas voir d'autres variables ou éléments du jeu de données.
+- Arrondis toute valeur décimale à deux chiffres maximum après la virgule.
 """
     try:
         answer = (await asyncio.to_thread(

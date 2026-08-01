@@ -74,7 +74,7 @@ class TestRoutage:
     def test_route_vers_anthropic(self, monkeypatch):
         vu = {}
 
-        def faux(prompt, images, model, history):
+        def faux(prompt, images, model, history, system=None):
             vu["model"] = model
             return "réponse claude"
 
@@ -86,7 +86,7 @@ class TestRoutage:
     def test_route_vers_openai_avec_le_bon_fournisseur(self, monkeypatch):
         vu = {}
 
-        def faux(prompt, images, model, history, provider):
+        def faux(prompt, images, model, history, provider, system=None):
             vu.update(model=model, provider=provider)
             return "réponse gpt"
 

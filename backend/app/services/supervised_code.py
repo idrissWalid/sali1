@@ -39,6 +39,16 @@ GAIN_RMSE_MIN = {gain_rmse}
 MCC_MIN_UTILE = {mcc_min}
 QUALITE_R2 = {qualite_r2!r}
 QUALITE_MCC = {qualite_mcc!r}
+HYPERPARAMS = {hyperparameters!r}
+TEST_SIZE = {test_size!r}
+RANDOM_STATE = {random_state!r}
+REQUESTED_MODEL = {requested_model!r}
+SUPPORTED_FAMILIES = {supported_families!r}
+
+def params(defaults):
+    result = dict(defaults)
+    result.update(HYPERPARAMS)
+    return result
 
 def qualifier(valeur, echelle):
     """Niveau de qualite atteint. Un seuil franchi n'est pas un gage de qualite :
@@ -102,11 +112,17 @@ else:
                if ratio_minoritaire < SEUIL_DESEQUILIBRE else "classification")
     classes = [str(c) for c in classes]
 
+if REQUESTED_MODEL and famille not in SUPPORTED_FAMILIES:
+    raise ValueError(
+        "Le modele '%s' est incompatible avec une cible de type %s."
+        % (REQUESTED_MODEL, famille)
+    )
+
 from sklearn.model_selection import train_test_split, cross_val_score, StratifiedKFold, KFold
 
 stratify = y if famille != "regression" and y.value_counts().min() >= 2 else None
 X_tr, X_te, y_tr, y_te = train_test_split(
-    X, y, test_size=0.25, random_state=42, stratify=stratify
+    X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=stratify
 )
 
 # ── Diagnostics d'hypothèses ─────────────────────────────────────────────────
@@ -241,12 +257,15 @@ def eval_regression(nom, libelle):
             from sklearn.linear_model import ElasticNetCV
             est = make_pipeline(
                 StandardScaler(),
-                ElasticNetCV(l1_ratio=[0.1, 0.5, 0.7, 0.9, 0.95, 1.0], cv=5,
-                             random_state=42, max_iter=5000),
+                ElasticNetCV(**params({{"l1_ratio": [0.1, 0.5, 0.7, 0.9, 0.95, 1.0],
+                                      "cv": 5, "random_state": RANDOM_STATE, "max_iter": 5000}})),
             )
+        elif nom == "random_forest":
+            from sklearn.ensemble import RandomForestRegressor
+            est = RandomForestRegressor(**params({{"n_estimators": 300, "random_state": RANDOM_STATE}}))
         else:
             from sklearn.ensemble import HistGradientBoostingRegressor
-            est = HistGradientBoostingRegressor(random_state=42)
+            est = HistGradientBoostingRegressor(**params({{"random_state": RANDOM_STATE}}))
         est.fit(X_tr, y_tr)
         pred_tr, pred_te = est.predict(X_tr), est.predict(X_te)
         if nom == "elasticnet":
@@ -311,7 +330,8 @@ def eval_classification(nom, libelle, ponderee):
             )
         est = make_pipeline(
             StandardScaler(),
-            LogisticRegression(max_iter=2000, class_weight=poids, C=C, random_state=42),
+            LogisticRegression(**params({{"max_iter": 2000, "class_weight": poids,
+                                         "C": C, "random_state": RANDOM_STATE}})),
         )
         est.fit(X_tr, y_tr)
         try:
@@ -323,20 +343,24 @@ def eval_classification(nom, libelle, ponderee):
     elif nom == "balanced_random_forest":
         from imblearn.ensemble import BalancedRandomForestClassifier
         est = BalancedRandomForestClassifier(
-            n_estimators=300, random_state=42, sampling_strategy="all", replacement=True,
+            **params({{"n_estimators": 300, "random_state": RANDOM_STATE,
+                      "sampling_strategy": "all", "replacement": True}})
         )
         est.fit(X_tr, y_tr)
         info["importances"] = {{c: f(v) for c, v in zip(X_tr.columns, est.feature_importances_)}}
     elif nom == "random_forest":
         from sklearn.ensemble import RandomForestClassifier
-        est = RandomForestClassifier(n_estimators=300, random_state=42, class_weight=poids)
+        est = RandomForestClassifier(**params({{"n_estimators": 300,
+                                               "random_state": RANDOM_STATE,
+                                               "class_weight": poids}}))
         est.fit(X_tr, y_tr)
         info["importances"] = {{c: f(v) for c, v in zip(X_tr.columns, est.feature_importances_)}}
     else:
         from sklearn.ensemble import HistGradientBoostingClassifier
-        est = HistGradientBoostingClassifier(
-            random_state=42, class_weight=("balanced" if ponderee else None),
-        )
+        est = HistGradientBoostingClassifier(**params({{
+            "random_state": RANDOM_STATE,
+            "class_weight": ("balanced" if ponderee else None),
+        }}))
         est.fit(X_tr, y_tr)
         try:
             from sklearn.inspection import permutation_importance
@@ -534,26 +558,36 @@ def pipeline_deployable(nom, famille, ponderee, info):
             est = LinearRegression()
         elif nom == "elasticnet":
             from sklearn.linear_model import ElasticNetCV
-            est = ElasticNetCV(l1_ratio=[0.1, 0.5, 0.7, 0.9, 0.95, 1.0], cv=5,
-                               random_state=42, max_iter=5000)
+            est = ElasticNetCV(**params({{"l1_ratio": [0.1, 0.5, 0.7, 0.9, 0.95, 1.0],
+                                        "cv": 5, "random_state": RANDOM_STATE,
+                                        "max_iter": 5000}}))
+        elif nom == "random_forest":
+            from sklearn.ensemble import RandomForestRegressor
+            est = RandomForestRegressor(**params({{"n_estimators": 300,
+                                                   "random_state": RANDOM_STATE}}))
         else:
             from sklearn.ensemble import HistGradientBoostingRegressor
-            est = HistGradientBoostingRegressor(random_state=42)
+            est = HistGradientBoostingRegressor(**params({{"random_state": RANDOM_STATE}}))
     elif nom.startswith("logistique"):
         from sklearn.linear_model import LogisticRegression
         C = 0.1 if info.get("remediation") else 1.0
-        est = LogisticRegression(max_iter=2000, class_weight=poids, C=C, random_state=42)
+        est = LogisticRegression(**params({{"max_iter": 2000, "class_weight": poids,
+                                           "C": C, "random_state": RANDOM_STATE}}))
     elif nom == "balanced_random_forest":
         from imblearn.ensemble import BalancedRandomForestClassifier
-        est = BalancedRandomForestClassifier(
-            n_estimators=300, random_state=42, sampling_strategy="all", replacement=True)
+        est = BalancedRandomForestClassifier(**params({{
+            "n_estimators": 300, "random_state": RANDOM_STATE,
+            "sampling_strategy": "all", "replacement": True}}))
     elif nom == "random_forest":
         from sklearn.ensemble import RandomForestClassifier
-        est = RandomForestClassifier(n_estimators=300, random_state=42, class_weight=poids)
+        est = RandomForestClassifier(**params({{"n_estimators": 300,
+                                               "random_state": RANDOM_STATE,
+                                               "class_weight": poids}}))
     else:
         from sklearn.ensemble import HistGradientBoostingClassifier
-        est = HistGradientBoostingClassifier(
-            random_state=42, class_weight=("balanced" if ponderee else None))
+        est = HistGradientBoostingClassifier(**params({{
+            "random_state": RANDOM_STATE,
+            "class_weight": ("balanced" if ponderee else None)}}))
 
     pipe = Pipeline([("pretraitement", pre), ("modele", est)])
     # Réajusté sur TOUTES les données : les métriques viennent du split test, mais
@@ -635,6 +669,10 @@ metrics = {{
     "budget_secondes": BUDGET,
     "duree_secondes": f(time.time() - DEPART),
     "sortie_anticipee": bool(retenu.get("conforme") and len(candidats) < len(MODELES[famille])),
+    "modele_impose": REQUESTED_MODEL,
+    "hyperparametres_imposes": HYPERPARAMS,
+    "test_size": TEST_SIZE,
+    "random_state": RANDOM_STATE,
     "avertissements": list(retenu.get("avertissements") or []),
     "violations": list(retenu.get("violations") or []),
 }}
@@ -680,11 +718,40 @@ print("Candidats evalues : %d/%d en %.1f s" % (len(candidats), len(MODELES[famil
 '''
 
 
-def build_supervised_code(target: str, features: list[str], budget: int | None = None) -> str:
+def build_supervised_code(
+    target: str,
+    features: list[str],
+    budget: int | None = None,
+    requested_model: str | None = None,
+    hyperparameters: dict | None = None,
+    test_size: float = 0.25,
+    random_state: int = 42,
+) -> str:
     """Rend le script du tournoi, prêt à être exécuté dans le sandbox."""
     from app.services.supervised_specs import MODELES
 
     modeles = {famille.value: liste for famille, liste in MODELES.items()}
+    supported_families = ["regression", "classification", "classification_desequilibree"]
+    if requested_model:
+        labels = {
+            "ols": "Régression linéaire (OLS)",
+            "elasticnet": "ElasticNet",
+            "random_forest": "Random Forest",
+            "balanced_random_forest": "Balanced Random Forest",
+            "gradient_boosting": "Gradient Boosting",
+            "logistique": "Régression logistique",
+        }
+        compatibility = {
+            "ols": ["regression"],
+            "elasticnet": ["regression"],
+            "random_forest": supported_families,
+            "balanced_random_forest": ["classification", "classification_desequilibree"],
+            "gradient_boosting": supported_families,
+            "logistique": ["classification", "classification_desequilibree"],
+        }
+        supported_families = compatibility[requested_model]
+        candidate = [(requested_model, labels[requested_model])]
+        modeles = {family: candidate for family in supported_families}
     return _TEMPLATE.format(
         target=target,
         features=features,
@@ -703,4 +770,9 @@ def build_supervised_code(target: str, features: list[str], budget: int | None =
         qualite_r2=QUALITE_R2,
         qualite_mcc=QUALITE_MCC,
         modeles=modeles,
+        hyperparameters=hyperparameters or {},
+        test_size=float(test_size),
+        random_state=int(random_state),
+        requested_model=requested_model,
+        supported_families=supported_families,
     )

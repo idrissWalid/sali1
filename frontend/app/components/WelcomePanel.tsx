@@ -8,7 +8,7 @@ interface Props {
 
 const capabilities = [
   { icon: Table2, title: "Explorer vos données", text: "Tableaux CSV et Excel" },
-  { icon: FileText, title: "Interroger vos documents", text: "PDF et documents Word" },
+  { icon: FileText, title: "Interroger vos documents", text: "PDF, Word, Markdown et LaTeX" },
   { icon: Sparkles, title: "Obtenir des insights", text: "Analyses en langage naturel" },
 ];
 
@@ -27,7 +27,7 @@ export default function WelcomePanel({ onUpload }: Props) {
           <span className="welcome-panel__upload-icon"><Upload size={20} /></span>
           <span>
             <strong>Importer un fichier</strong>
-            <small>CSV, Excel, PDF ou Word</small>
+            <small>CSV, Excel, PDF, Word, Markdown ou LaTeX</small>
           </span>
           <ArrowUpRight className="welcome-panel__arrow" size={19} />
         </button>

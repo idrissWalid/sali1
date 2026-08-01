@@ -144,7 +144,14 @@ def ask_question(api_base: str, session_id: str, message: str, model: str | None
         body["model"] = model
     response = requests.post(f"{api_base}/api/chat", json=body, timeout=CHAT_TIMEOUT)
     response.raise_for_status()
-    return response.json().get("response", "")
+    payload = response.json()
+    answer = str(payload.get("response", ""))
+    # Certains providers sont actuellement normalisés par /api/chat en HTTP 200
+    # avec une chaîne « Erreur <provider> : ... ». Une évaluation ne doit jamais
+    # transformer une panne/quota en réponse vide puis en score nul.
+    if re.match(r"^\s*Erreur\s+[A-Za-z0-9_-]+\s*:", answer, re.I):
+        raise RuntimeError(answer.strip())
+    return answer
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -280,7 +287,7 @@ def summarize(graded: list[dict], errors: list[dict]) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════
 #  BOUCLE PRINCIPALE
 # ═══════════════════════════════════════════════════════════════════════════
-def main() -> int:
+def main_dabench() -> int:
     parser = argparse.ArgumentParser(
         description="Évalue l'agent d'analyse de données sur InfiAgent-DABench.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -436,5 +443,607 @@ def main() -> int:
     return 0
 
 
+# =============================================================================
+#  INSIGHTEVAL (Zhu et al., ACL 2026 / arXiv:2511.22884v2)
+# =============================================================================
+
+INSIGHTEVAL_ANNOTATIONS_URL = (
+    "https://huggingface.co/datasets/zhenghaozhu/InsightEval/resolve/main/"
+    "annotations.jsonl"
+)
+INSIGHTEVAL_FILE_URL = (
+    "https://huggingface.co/datasets/zhenghaozhu/InsightEval/resolve/main/{path}"
+)
+PROJECT_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+INSIGHTBENCH_TABLES_DIR = Path(__file__).resolve().parent / "data" / "insightbench" / "csvs"
+
+
+def _download(url: str, destination: Path) -> Path:
+    """Télécharge un fichier de benchmark de façon atomique."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    with requests.get(url, stream=True, timeout=120) as response:
+        response.raise_for_status()
+        with temporary.open("wb") as handle:
+            for chunk in response.iter_content(1024 * 1024):
+                if chunk:
+                    handle.write(chunk)
+    temporary.replace(destination)
+    return destination
+
+
+def load_insighteval_annotations(path: Path, allow_download: bool = True) -> list[dict]:
+    if not path.is_file():
+        if not allow_download:
+            raise FileNotFoundError(f"Annotations InsightEval introuvables : {path}")
+        print(f"[download] Annotations InsightEval vers {path}")
+        _download(INSIGHTEVAL_ANNOTATIONS_URL, path)
+    rows = load_jsonl(path)
+    required = {"instance_id", "goal", "insights", "summary", "table_path"}
+    for line_number, row in enumerate(rows, 1):
+        missing = required.difference(row)
+        if missing:
+            raise ValueError(
+                f"Annotation {line_number} incomplète, champs absents : {sorted(missing)}"
+            )
+    return rows
+
+
+def resolve_insighteval_table(
+    annotation: dict,
+    search_dirs: list[Path],
+    cache_dir: Path,
+    allow_download: bool = True,
+) -> Path:
+    """Retrouve une table locale, y compris si SALI a préfixé son nom par un UUID."""
+    relative = Path(str(annotation["table_path"]).replace("\\", "/"))
+    basename = relative.name
+    legacy_basename = f"flag-{annotation.get('instance_id')}.csv"
+    candidates: list[Path] = []
+    for directory in search_dirs:
+        candidates.extend((directory / relative).resolve() for _ in [0])
+        candidates.append((directory / basename).resolve())
+        # InsightEval a été construit à partir d'InsightBench : les tables
+        # data_N.csv sont exactement les anciennes flag-N.csv.
+        candidates.append((directory / legacy_basename).resolve())
+        if directory.is_dir():
+            candidates.extend(sorted(directory.glob(f"*_{basename}")))
+    candidates.append(cache_dir / basename)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+
+    if not allow_download:
+        raise FileNotFoundError(f"CSV introuvable : {basename}")
+    destination = cache_dir / basename
+    print(f"  [download] {basename} absent localement, téléchargement du CSV officiel")
+    quoted_path = "/".join(requests.utils.quote(part, safe="") for part in relative.parts)
+    return _download(INSIGHTEVAL_FILE_URL.format(path=quoted_path), destination)
+
+
+def build_evidence_prompt(annotation: dict) -> str:
+    """Première passe : impose des calculs reproductibles avant l'interprétation."""
+    return f"""You are the evidence-extraction stage of a data-analysis benchmark.
+
+Analytical goal:
+<goal>{annotation['goal']}</goal>
+
+Expected dataset schema:
+<schema>{annotation.get('table_schema', '')}</schema>
+
+You MUST use Python on the uploaded dataframe to verify the actual row count,
+columns, category distributions, relevant group counts, temporal patterns and
+other quantities needed to address the goal. Do not estimate values from a sample
+or invent plausible numbers.
+
+Return a compact evidence report containing:
+1. the executed Python code;
+2. the exact outputs obtained from the dataframe;
+3. a JSON object inside <evidence>...</evidence> with verified facts only.
+
+Do not write final insights or recommendations yet."""
+
+
+def build_analysis_code_prompt(annotation: dict) -> str:
+    """Prompt L_code des équations 6–7 : code seul, exécuté ensuite en sandbox."""
+    return f"""Write Python code to analyze a pandas dataframe named `df`.
+
+Goal:
+<goal>{annotation['goal']}</goal>
+
+Schema:
+<schema>{annotation.get('table_schema', '')}</schema>
+
+The code must calculate, from the full dataframe, all evidence needed for ten
+diverse insights addressing the goal. Include exact category counts and shares,
+cross-tabulations for relevant personnel/groups/locations, temporal patterns,
+frequent issue descriptions or identifiers, and workload imbalances when those
+columns exist. For every percentage, print its numerator, denominator, formula,
+and a label stating exactly what population the denominator represents. Never
+hard-code a result. Print compact, labeled textual or JSON outputs. Do not create
+charts and do not train models.
+
+Return only one executable Python code block, without commentary."""
+
+
+def extract_python_code(response: str) -> str:
+    match = re.search(r"```(?:python)?\s*(.*?)```", response or "", re.I | re.S)
+    code = (match.group(1) if match else response or "").strip()
+    if not code:
+        raise RuntimeError("Le modèle n'a produit aucun code d'analyse")
+    return code
+
+
+def extract_evidence_with_sandbox(csv_path: Path, annotation: dict, model: str) -> str:
+    """Génère L_code, exécute Exec(C,T), puis renvoie la sortie vérifiée."""
+    from app.services.gemini_service import complete_text
+    from app.services.sandbox_service import execute_code
+
+    code_response = complete_text(build_analysis_code_prompt(annotation), model=model)
+    code = extract_python_code(code_response)
+    dataframe_bytes = csv_path.read_bytes()
+    execution = execute_code(code, dataframe_bytes, csv_path.name)
+    for repair_attempt in range(3):
+        if not execution.get("error"):
+            break
+        error = execution["error"]
+        detail = error.get("technical") if isinstance(error, dict) else str(error)
+        repair_prompt = f"""Fix this Python analysis code after its sandbox error.
+The dataframe is named df. Preserve all requested calculations. Ensure every
+printed/JSON key and value is serializable (convert pandas Period/Timestamp and
+numpy scalar values to strings or native Python values).
+
+CODE:
+```python
+{code}
+```
+
+ERROR:
+{detail}
+
+Return only the complete corrected Python code block."""
+        repaired_response = complete_text(repair_prompt, model=model)
+        code = extract_python_code(repaired_response)
+        execution = execute_code(code, dataframe_bytes, csv_path.name)
+    if execution.get("error"):
+        final_error = execution["error"]
+        final_detail = (
+            final_error.get("technical")
+            if isinstance(final_error, dict)
+            else str(final_error)
+        )
+        raise RuntimeError(
+            f"Code d'analyse toujours en échec après 3 réparations : {final_detail}"
+        )
+    output = str(execution.get("output") or "").strip()
+    if not output:
+        raise RuntimeError("Le code d'analyse n'a imprimé aucune preuve")
+    return f"EXECUTED PYTHON CODE:\n{code}\n\nVERIFIED SANDBOX OUTPUT:\n{output}"
+
+
+def build_insight_prompt(
+    annotation: dict,
+    n_insights: int = 10,
+    evidence: str = "",
+) -> str:
+    """Seconde passe : synthèse fondée uniquement sur les preuves exécutées."""
+    return f"""You are a data scientist performing evidence-grounded insight discovery.
+
+Analytical goal:
+<goal>{annotation['goal']}</goal>
+
+Dataset description:
+<description>{annotation.get('table_description', '')}</description>
+
+Expected dataset schema:
+<schema>{annotation.get('table_schema', '')}</schema>
+
+Verified evidence produced by a previous Python execution:
+<verified_evidence>{evidence}</verified_evidence>
+
+Produce exactly
+{n_insights} distinct, concise, non-trivial insights that directly address the goal.
+Cover several perspectives where relevant: descriptive, diagnostic, predictive,
+prescriptive, evaluative, and exploratory. Every factual claim must be supported by
+the verified evidence above; quantify findings whenever possible. Never introduce a
+number, category, person, location or trend absent from that evidence. If the evidence
+is insufficient for a claim, omit the claim rather than guessing. Before emitting
+each percentage or ratio, recompute it from the stated numerator and denominator.
+Never swap conditional directions (for example P(Hardware|Australia) is not
+P(Australia|Hardware)). Include numerator/denominator in the final insight whenever
+a percentage is reported.
+
+Return only this machine-readable structure:
+<insights>
+<insight>First insight</insight>
+...
+</insights>
+<summary>A concise synthesis of the main findings.</summary>"""
+
+
+def synthesize_insights_direct(prompt: str, model: str) -> str:
+    """Synthèse sans le routeur /api/chat, qui impose insights_visualization."""
+    from app.services.gemini_service import complete_text
+
+    response = complete_text(prompt, model=model)
+    if re.match(r"^\s*Erreur\s+[A-Za-z0-9_-]+\s*:", response, re.I):
+        raise RuntimeError(response.strip())
+    return response
+
+
+_INSIGHT_TAG = re.compile(r"<insight>(.*?)</insight>", re.I | re.S)
+_SUMMARY_TAG = re.compile(r"<summary>(.*?)</summary>", re.I | re.S)
+
+
+def parse_insight_response(text: str) -> tuple[list[str], str]:
+    """Parse XML demandé, avec repli JSON puis liste Markdown."""
+    insights = [re.sub(r"\s+", " ", value).strip() for value in _INSIGHT_TAG.findall(text)]
+    summary_match = _SUMMARY_TAG.search(text or "")
+    summary = re.sub(r"\s+", " ", summary_match.group(1)).strip() if summary_match else ""
+    if insights:
+        return insights, summary
+
+    try:
+        payload = json.loads((text or "").strip().strip("`"))
+        if isinstance(payload, dict):
+            raw_insights = payload.get("insights") or []
+            insights = [str(value).strip() for value in raw_insights if str(value).strip()]
+            return insights, str(payload.get("summary") or "").strip()
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    for line in (text or "").splitlines():
+        match = re.match(r"^\s*(?:[-*]|\d+[.)])\s+(.+?)\s*$", line)
+        if match:
+            insights.append(match.group(1))
+    return insights, summary
+
+
+def _rouge1(reference: str, prediction: str) -> dict[str, float]:
+    from rouge_score import rouge_scorer
+
+    scorer = rouge_scorer.RougeScorer(["rouge1"], use_stemmer=True)
+    score_value = scorer.score(reference or "", prediction or "")["rouge1"]
+    return {
+        "precision": score_value.precision,
+        "recall": score_value.recall,
+        "fmeasure": score_value.fmeasure,
+    }
+
+
+def score_insights(reference: list[str], predicted: list[str]) -> dict:
+    """Équations 13–15 du papier avec ROUGE-1 comme similarité S."""
+    matrix = [
+        [_rouge1(gt, candidate)["fmeasure"] for candidate in predicted]
+        for gt in reference
+    ]
+    recall = sum((max(row) if row else 0.0) for row in matrix) / len(reference) \
+        if reference else 0.0
+    precision_values = [
+        max((matrix[row][column] for row in range(len(reference))), default=0.0)
+        for column in range(len(predicted))
+    ]
+    precision = sum(precision_values) / len(precision_values) if precision_values else 0.0
+    f1 = 2 * recall * precision / (recall + precision) if recall + precision else 0.0
+    return {
+        "recall": round(recall, 6),
+        "precision": round(precision, 6),
+        "f1": round(f1, 6),
+        "similarity_matrix": matrix,
+    }
+
+
+def _parse_json_object(text: str) -> dict:
+    """Extrait un objet JSON, y compris lorsqu'un fournisseur ajoute du Markdown."""
+    candidate = (text or "").strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", candidate, re.I | re.S)
+    if fenced:
+        candidate = fenced.group(1)
+    else:
+        start, end = candidate.find("{"), candidate.rfind("}")
+        if start >= 0 and end > start:
+            candidate = candidate[start:end + 1]
+    payload = json.loads(candidate)
+    if not isinstance(payload, dict):
+        raise ValueError("La réponse G-Eval n'est pas un objet JSON")
+    return payload
+
+
+def score_insights_geval(
+    reference: list[str],
+    predicted: list[str],
+    reference_summary: str,
+    predicted_summary: str,
+    evaluator_model: str,
+) -> tuple[dict, dict]:
+    """Similarité sémantique G-Eval, puis agrégation Recall/Precision/F1.
+
+    Un seul appel juge toute l'instance afin d'éviter un appel par paire. Les
+    mêmes équations d'agrégation que ROUGE-1 sont ensuite appliquées.
+    """
+    from app.services.gemini_service import complete_text
+
+    rows, columns = len(reference), len(predicted)
+    prompt = f"""You are the G-Eval semantic judge for the InsightEval benchmark.
+Compare each reference insight with each generated insight. A score is a real
+number from 0 to 1: 1 means the same correct, data-grounded finding (including
+compatible entities, direction, quantities and denominator); 0 means unrelated
+or contradictory. Penalize swapped conditional directions and incompatible
+numbers. Also score semantic equivalence of the two summaries from 0 to 1.
+
+Reference insights: {json.dumps(reference, ensure_ascii=False)}
+Generated insights: {json.dumps(predicted, ensure_ascii=False)}
+Reference summary: {json.dumps(reference_summary or '', ensure_ascii=False)}
+Generated summary: {json.dumps(predicted_summary or '', ensure_ascii=False)}
+
+Return JSON only, exactly:
+{{"similarity_matrix": <{rows} rows by {columns} columns>, "summary_score": <0..1>}}
+Do not add prose or markdown."""
+    payload = _parse_json_object(complete_text(prompt, model=evaluator_model))
+    raw_matrix = payload.get("similarity_matrix")
+    if not isinstance(raw_matrix, list) or len(raw_matrix) != rows:
+        raise ValueError(f"Matrice G-Eval invalide : {rows} lignes attendues")
+    matrix = []
+    for row in raw_matrix:
+        if not isinstance(row, list) or len(row) != columns:
+            raise ValueError(f"Matrice G-Eval invalide : {columns} colonnes attendues")
+        matrix.append([max(0.0, min(1.0, float(value))) for value in row])
+    recall = sum((max(row) if row else 0.0) for row in matrix) / rows if rows else 0.0
+    precision_values = [
+        max((matrix[row][column] for row in range(rows)), default=0.0)
+        for column in range(columns)
+    ]
+    precision = sum(precision_values) / columns if columns else 0.0
+    f1 = 2 * recall * precision / (recall + precision) if recall + precision else 0.0
+    summary_score = max(0.0, min(1.0, float(payload.get("summary_score", 0.0))))
+    return (
+        {"recall": round(recall, 6), "precision": round(precision, 6),
+         "f1": round(f1, 6), "similarity_matrix": matrix},
+        {"fmeasure": round(summary_score, 6)},
+    )
+
+
+def evaluate_insighteval_instance(
+    annotation: dict,
+    response: str,
+    evidence_response: str = "",
+    evaluator_model: str | None = None,
+) -> dict:
+    predicted, predicted_summary = parse_insight_response(response)
+    reference = [str(item) for item in annotation.get("insights") or []]
+    metrics = score_insights(reference, predicted)
+    summary_metrics = _rouge1(str(annotation.get("summary") or ""), predicted_summary)
+    insight_geval = summary_geval = None
+    geval_error = None
+    if evaluator_model:
+        try:
+            insight_geval, summary_geval = score_insights_geval(
+                reference, predicted, str(annotation.get("summary") or ""),
+                predicted_summary, evaluator_model,
+            )
+        except Exception as exc:
+            # Une panne du juge ne doit pas jeter les scores ROUGE déjà calculés.
+            geval_error = str(exc)
+    details = annotation.get("insights_detail") or []
+    comparisons = []
+    matrix = metrics["similarity_matrix"]
+    for index, expected in enumerate(reference):
+        row = matrix[index] if index < len(matrix) else []
+        best_index = max(range(len(row)), key=row.__getitem__) if row else None
+        detail = details[index] if index < len(details) and isinstance(details[index], dict) else {}
+        comparisons.append({
+            "question_number": index + 1,
+            "question": detail.get("question") or f"Insight de référence {index + 1}",
+            "data_type": detail.get("data_type"),
+            "expected": expected,
+            "obtained": predicted[best_index] if best_index is not None else None,
+            "obtained_index": best_index + 1 if best_index is not None else None,
+            "rouge1_similarity": round(row[best_index], 6) if best_index is not None else 0.0,
+        })
+    return {
+        "instance_id": annotation["instance_id"],
+        "header": annotation.get("header"),
+        "category": annotation.get("category"),
+        "difficulty": annotation.get("difficulty"),
+        "goal": annotation["goal"],
+        "reference_insights": reference,
+        "predicted_insights": predicted,
+        "reference_summary": annotation.get("summary"),
+        "predicted_summary": predicted_summary,
+        "question_comparisons": comparisons,
+        "insight_rouge1": metrics,
+        "summary_rouge1": {key: round(value, 6) for key, value in summary_metrics.items()},
+        "insight_geval": insight_geval,
+        "summary_geval": summary_geval,
+        "geval_error": geval_error,
+        "format_ok": bool(predicted) and bool(predicted_summary),
+        "evidence_response": evidence_response,
+        "raw_response": response,
+    }
+
+
+def summarize_insighteval(results: list[dict], errors: list[dict]) -> dict:
+    def average(path: tuple[str, ...]) -> float | None:
+        values = []
+        for item in results:
+            value = item
+            for key in path:
+                if value is None or not isinstance(value, dict):
+                    value = None
+                    break
+                value = value.get(key)
+            if value is not None:
+                values.append(float(value))
+        return round(sum(values) / len(values), 6) if values else None
+
+    return {
+        "n_instances": len(results) + len(errors),
+        "n_evaluated": len(results),
+        "n_errors": len(errors),
+        "format_compliance": round(
+            sum(item["format_ok"] for item in results) / len(results), 6
+        ) if results else None,
+        "insights_rouge1_recall": average(("insight_rouge1", "recall")),
+        "insights_rouge1_precision": average(("insight_rouge1", "precision")),
+        "insights_rouge1_f1": average(("insight_rouge1", "f1")),
+        "insights_geval_recall": average(("insight_geval", "recall")),
+        "insights_geval_precision": average(("insight_geval", "precision")),
+        "insights_geval_f1": average(("insight_geval", "f1")),
+        "summary_rouge1_recall": average(("summary_rouge1", "recall")),
+        "summary_rouge1_precision": average(("summary_rouge1", "precision")),
+        "summary_rouge1_f1": average(("summary_rouge1", "fmeasure")),
+        "summary_geval_f1": average(("summary_geval", "fmeasure")),
+    }
+
+
+def main_insighteval() -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Évalue SALI sur InsightEval (arXiv:2511.22884v2) : insights "
+            "ROUGE-1 rappel/précision/F1 et résumé."
+        )
+    )
+    default_cache = PROJECT_DATA_DIR / "insighteval"
+    parser.add_argument("--annotations", type=Path,
+                        default=default_cache / "annotations.jsonl")
+    parser.add_argument("--tables-dir", type=Path, action="append", default=[],
+                        help="dossier local de CSV (répétable); data/uploads est inspecté par défaut")
+    parser.add_argument("--cache-dir", type=Path, default=default_cache / "csvs")
+    parser.add_argument("--no-download", action="store_true",
+                        help="interdit le téléchargement des fichiers officiels manquants")
+    parser.add_argument("--api-base", default=DEFAULT_API_BASE)
+    parser.add_argument("--model", default=None, help="modèle SALI évalué")
+    parser.add_argument("--language", choices=["en", "fr"], default="en")
+    parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--instance-id", type=int, action="append", default=[],
+                        help="n'évaluer que cet ID (option répétable)")
+    parser.add_argument("--n-insights", type=int, default=10)
+    parser.add_argument("--with-interpretation", action="store_true")
+    parser.add_argument("--responses", type=Path,
+                        help="JSONL de réponses existantes; évite les appels à SALI")
+    parser.add_argument("--out", type=Path,
+                        default=Path("eval_analysis_results.json"))
+    args = parser.parse_args()
+
+    allow_download = not args.no_download
+    try:
+        annotations = load_insighteval_annotations(args.annotations, allow_download)
+    except Exception as exc:
+        print(f"ERREUR Chargement InsightEval impossible : {exc}", file=sys.stderr)
+        return 1
+
+    if args.instance_id:
+        wanted = set(args.instance_id)
+        annotations = [row for row in annotations if int(row["instance_id"]) in wanted]
+    if args.limit:
+        annotations = annotations[:args.limit]
+    if not annotations:
+        print("ERREUR Aucun cas InsightEval sélectionné.", file=sys.stderr)
+        return 1
+
+    saved_responses: dict[int, str] = {}
+    if args.responses:
+        for row in load_jsonl(args.responses):
+            saved_responses[int(row["instance_id"])] = str(
+                row.get("response") or row.get("raw_response") or ""
+            )
+    else:
+        try:
+            requests.get(f"{args.api_base}/health", timeout=10).raise_for_status()
+        except Exception as exc:
+            print(f"ERREUR Backend injoignable sur {args.api_base} : {exc}", file=sys.stderr)
+            print("  Lancez d'abord : python run_server.py", file=sys.stderr)
+            return 1
+
+    search_dirs = args.tables_dir or [
+        INSIGHTBENCH_TABLES_DIR,
+        PROJECT_DATA_DIR / "uploads",
+        default_cache / "csvs",
+    ]
+    results, errors = [], []
+    started = time.time()
+    print(f"InsightEval : {len(annotations)} instance(s), modèle : {args.model or 'défaut backend'}")
+
+    for position, annotation in enumerate(annotations, 1):
+        instance_id = int(annotation["instance_id"])
+        try:
+            if instance_id in saved_responses:
+                response = saved_responses[instance_id]
+            else:
+                csv_path = resolve_insighteval_table(
+                    annotation, search_dirs, args.cache_dir, allow_download
+                )
+                session_id = upload_csv(
+                    args.api_base, csv_path, args.model, args.with_interpretation
+                )
+                if args.model:
+                    evidence_response = extract_evidence_with_sandbox(
+                        csv_path, annotation, args.model
+                    )
+                else:
+                    evidence_response = ask_question(
+                        args.api_base,
+                        session_id,
+                        build_evidence_prompt(annotation),
+                        args.model,
+                        args.language,
+                    )
+                synthesis_prompt = build_insight_prompt(
+                    annotation, args.n_insights, evidence_response
+                )
+                if args.model:
+                    response = synthesize_insights_direct(synthesis_prompt, args.model)
+                else:
+                    response = ask_question(
+                        args.api_base,
+                        session_id,
+                        synthesis_prompt,
+                        args.model,
+                        args.language,
+                    )
+            result = evaluate_insighteval_instance(
+                annotation,
+                response,
+                evidence_response if instance_id not in saved_responses else "",
+            )
+            results.append(result)
+            metrics = result["insight_rouge1"]
+            print(
+                f"  OK [{position}/{len(annotations)}] #{instance_id} "
+                f"R={metrics['recall']:.3f} P={metrics['precision']:.3f} "
+                f"F1={metrics['f1']:.3f} ({len(result['predicted_insights'])} insights)"
+            )
+        except Exception as exc:
+            errors.append({"instance_id": instance_id, "error": str(exc)})
+            print(f"  ERREUR [{position}/{len(annotations)}] #{instance_id} : {exc}")
+        time.sleep(REQUEST_DELAY)
+
+    summary = summarize_insighteval(results, errors)
+    summary.update({
+        "benchmark": "InsightEval",
+        "paper": "https://arxiv.org/abs/2511.22884v2",
+        "model": args.model or "(défaut backend)",
+        "total_time_s": round(time.time() - started, 1),
+        "metric_note": (
+            "ROUGE-1 local selon les équations 13–15. G-Eval et novelty ne sont "
+            "pas calculés sans configuration explicite de trois modèles juges."
+        ),
+    })
+    args.out.write_text(
+        json.dumps({"summary": summary, "results": results, "errors": errors},
+                   ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    print("\n" + "=" * 60)
+    print(f"  Évaluées : {summary['n_evaluated']} · erreurs : {summary['n_errors']}")
+    print(f"  Insights ROUGE-1 rappel    : {summary['insights_rouge1_recall']}")
+    print(f"  Insights ROUGE-1 précision : {summary['insights_rouge1_precision']}")
+    print(f"  Insights ROUGE-1 F1        : {summary['insights_rouge1_f1']}")
+    print(f"  Résumé ROUGE-1 F1          : {summary['summary_rouge1_f1']}")
+    print("=" * 60)
+    print(f"Resultats : {args.out}")
+    return 0 if results else 1
+
+
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main_insighteval())

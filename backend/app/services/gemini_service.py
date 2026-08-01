@@ -46,11 +46,21 @@ def get_gemini_client():
         raise
 
 
-def complete_text(prompt: str, model: str, history: list | None = None) -> str:
-    """Point d'entrée unique multi-fournisseur pour un prompt simple (sans le SYSTEM_PROMPT conversationnel).
+def complete_text(prompt: str, model: str, history: list | None = None,
+                  system: str | None = None) -> str:
+    """Point d'entrée unique multi-fournisseur pour un prompt.
     Route vers Gemini / Mistral / OpenAI / Groq / Anthropic / Ollama selon le format de `model`.
     Convention : "<provider>/<model>" pour les fournisseurs API (ex: "openai/gpt-4o-mini"),
     nom nu préfixé "gemini" pour Gemini, sinon un modèle Ollama local (ex: "gemma2:latest").
+
+    `system` est remis à chaque fournisseur dans SON emplacement dédié —
+    `system_instruction` chez Gemini, message de rôle `system` en OpenAI-compatible,
+    champ `system` chez Anthropic et Ollama. C'est le seul canal que les modèles
+    traitent comme une consigne à respecter ; concaténé en tête du tour utilisateur
+    il n'est qu'un préambule parmi d'autres, que les petits modèles paraphrasent ou
+    ignorent. Laisser `system` à None reproduit le comportement d'un prompt de tâche
+    nu (classification d'intention, génération de code…), qui n'a pas de consigne
+    conversationnelle à porter.
     """
     history = history or []
 
@@ -67,12 +77,20 @@ def complete_text(prompt: str, model: str, history: list | None = None) -> str:
         else:
             provider_complete = None
         if provider_complete is not None:
-            return provider_complete(prompt, real_model, history=history).strip()
+            return provider_complete(prompt, real_model, history=history, system=system).strip()
 
     if not model or model.startswith("gemini"):
+        # `get_gemini_client` d'abord : il lève l'erreur explicite « clé manquante »
+        # et garantit que `types` a bien été importé avant qu'on s'en serve.
         client = get_gemini_client()
         gemini_history = _build_gemini_history(history)
-        chat = client.chats.create(model=model, history=gemini_history)
+        chat = client.chats.create(
+            model=model,
+            history=gemini_history,
+            # Posé sur la session de chat plutôt que sur l'envoi : le SDK le
+            # conserve et le réapplique à chaque `send_message` ultérieur.
+            config=types.GenerateContentConfig(system_instruction=system) if system else None,
+        )
         return chat.send_message(prompt).text.strip()
 
     full_prompt = ""
@@ -80,7 +98,7 @@ def complete_text(prompt: str, model: str, history: list | None = None) -> str:
         role = "User" if msg["role"] == "user" else "Assistant"
         full_prompt += f"{role}: {msg['content']}\n"
     full_prompt += prompt
-    return ask_ollama(full_prompt, model=model).strip()
+    return ask_ollama(full_prompt, model=model, system=system).strip()
 
 
 # ── Langue de réponse de l'agent ─────────────────────────────────────────────
@@ -134,46 +152,53 @@ def build_system_prompt() -> str:
     return _SYSTEM_PROMPTS.get(response_language.get(), _SYSTEM_PROMPTS["fr"])
 
 def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: str | None = None) -> str:
+    """Réponse conversationnelle de l'agent, prompt système compris.
+
+    Le tour utilisateur ne porte plus que ce qui relève de l'utilisateur — les
+    données en contexte et sa question. Le prompt système part dans l'emplacement
+    dédié du fournisseur (voir `complete_text`). Concaténé comme avant, il se
+    présentait au modèle comme un texte à commenter au même titre que le reste, et
+    chez Ollama il pouvait tomber dans la zone amputée par le raccourcissement du
+    prompt : les consignes de langue et de style disparaissaient alors sans trace.
+
+    Renvoie le message d'erreur au lieu de le lever : les appelants (chat, rapports)
+    l'affichent tel quel à l'utilisateur.
+    """
     model = model or config.get_default_model()
+    question = f"{data_context}\n\n" if data_context else ""
+    question += f"Question : {prompt}"
     try:
-        full_prompt = build_system_prompt()
-        if data_context:
-            full_prompt += f"\n\n{data_context}"
-        full_prompt += f"\n\nQuestion : {prompt}"
-
-        gemini_history = _build_gemini_history(history)
-
-        if model and not model.startswith("gemini"):
-            # Route vers Mistral / OpenAI / Groq / Anthropic / Ollama
-            return complete_text(full_prompt, model, history)
-
-        client = get_gemini_client()
-        logger.debug("Envoyer requête Gemini — model=%s prompt_len=%d history_len=%d", model, len(full_prompt), len(gemini_history))
-        chat = client.chats.create(model=model, history=gemini_history)
-        response = chat.send_message(full_prompt)
-        logger.debug("Réponse Gemini reçue (len=%d)", len(response.text) if getattr(response, 'text', None) else 0)
-        return response.text
+        logger.debug("Envoyer requête LLM — model=%s prompt_len=%d history_len=%d", model, len(question), len(history))
+        response = complete_text(question, model, history, system=build_system_prompt())
+        logger.debug("Réponse LLM reçue (len=%d)", len(response or ""))
+        return response
     except Exception as e:
-        logger.exception("Erreur lors de l'appel à Gemini : %s", str(e))
+        logger.exception("Erreur lors de l'appel au modèle %s : %s", model, str(e))
         return f"Erreur Gemini : {str(e)}"
 
 
-def ask_gemini_vision(prompt: str, images: list, history: list = [], model: str | None = None) -> str:
+def ask_gemini_vision(prompt: str, images: list, history: list = [], model: str | None = None,
+                      system: str | None = None) -> str:
     """Répond à une question en s'appuyant directement sur des images (ex: pages de
     document scanné retrouvées par ColSmolVLM) — pas de texte OCR intermédiaire.
 
     Ne pas appeler directement : passer par `vision_service.ask_vision`, qui route
-    vers le fournisseur choisi par l'utilisateur. Cette fonction n'est que le bras
-    Gemini de ce routage."""
+    vers le fournisseur choisi par l'utilisateur ET fournit `system`. Cette fonction
+    n'est que le bras Gemini de ce routage."""
     try:
-        full_prompt = build_system_prompt() + f"\n\nQuestion : {prompt}"
+        # Avant de toucher à `types` : si l'import du SDK a échoué, cet appel lève
+        # l'erreur explicite plutôt qu'un AttributeError sur un module à None.
+        client = get_gemini_client()
         gemini_history = _build_gemini_history(history)
 
         parts = [types.Part.from_bytes(data=img, mime_type="image/png") for img in images]
-        parts.append(types.Part.from_text(text=full_prompt))
+        parts.append(types.Part.from_text(text=f"Question : {prompt}"))
 
-        client = get_gemini_client()
-        chat = client.chats.create(model=model or config.get_default_model(), history=gemini_history)
+        chat = client.chats.create(
+            model=model or config.get_default_model(),
+            history=gemini_history,
+            config=types.GenerateContentConfig(system_instruction=system) if system else None,
+        )
         response = chat.send_message(parts)
         return response.text
     except Exception as e:

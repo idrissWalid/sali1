@@ -134,8 +134,53 @@ Ne répète pas les chiffres bruts si le résultat parle de lui-même — expliq
     #    est sauvegardé (dashboard). ──
     if intent == "series_temporelles":
         if file_bytes:
+            from app.services.prompt_budget import profil_modele
             from app.services.timeseries_pipeline import run_rigorous_timeseries, run_autoforecast_timeseries
             from app.services.timeseries_service import infer_series_columns
+
+            # ── Choix du moteur selon ce que le modèle sait faire ──────────────
+            # Le pipeline rigoureux fait ÉCRIRE au modèle la méthodologie A–H :
+            # ~80 lignes de consignes, deux gates bloquants, un schéma JSON exact.
+            # Un petit modèle local n'y arrive pas — il produit du code cassé,
+            # épuise les tours d'autocorrection, et l'on se replie de toute façon
+            # sur le moteur déterministe, plusieurs minutes et plusieurs appels
+            # plus tard. Autant y aller directement.
+            #
+            # Rien n'est perdu en capacité, seul l'ORDRE change : le moteur
+            # automatique garde lui-même le pipeline rigoureux en secours interne.
+            # Ici l'utilisateur n'a choisi aucun moteur (contrairement à
+            # /models/train-timeseries, où son choix explicite est respecté) : c'est
+            # donc bien à l'application de trancher.
+            if not profil_modele(model).consignes_denses:
+                date_col, value_col = await to_thread(infer_series_columns, file_bytes, filename)
+                if date_col and value_col:
+                    yield {"type": "step", "phase": "model_generating",
+                           "message": "Prévision automatique (modèles statistiques en concurrence)…"}
+                    auto = await to_thread(
+                        run_autoforecast_timeseries,
+                        question=message,
+                        file_bytes=file_bytes,
+                        filename=filename,
+                        session_id=session_id,
+                        data_context=data_context,
+                        history=history,
+                        model=model,
+                        date_col=date_col,
+                        value_col=value_col,
+                    )
+                    if auto["ok"]:
+                        yield {"type": "result", "response": auto["response"], "images": auto["images"], "model_id": auto.get("model_id"), "model_type": "timeseries"}
+                        return
+
+                    # Échec : le moteur automatique a DÉJÀ tenté le pipeline
+                    # rigoureux en secours interne. Les deux ont échoué — inutile de
+                    # redemander la méthodologie A–H à un modèle qui vient d'échouer.
+                    yield _step("thinking", "Réflexion…")
+                    response = await to_thread(ask_gemini, prompt=message, history=history, data_context=data_context, model=model)
+                    yield {"type": "result", "response": response, "images": images}
+                    return
+                # Colonnes indéterminables : le moteur automatique les exige, on
+                # retombe sur le chemin nominal ci-dessous.
 
             # Signale au frontend qu'un modèle est en cours de génération
             # (placeholder animé dans « Éléments générés »).
@@ -352,7 +397,7 @@ Réponds uniquement à partir des pages du document ci-jointes.
             intent = await to_thread(detect_intent, request.message, request.model)
 
         if embedded_bytes and intent in DATASET_INTENTS:
-            table_context = get_embedded_table_context(request.session_id)
+            table_context = get_embedded_table_context(request.session_id, model=request.model)
             async for event in _run_dataset_intent(
                 intent, request.session_id, request.message, request.model, history,
                 embedded_bytes, embedded_filename, table_context
@@ -365,7 +410,7 @@ Réponds uniquement à partir des pages du document ci-jointes.
             from app.services.rag_service import retrieve_context_with_sources
             yield _step("searching", "Recherche des passages pertinents…")
             context, sources = await to_thread(retrieve_context_with_sources, request.session_id, request.message)
-            table_context = get_embedded_table_context(request.session_id)
+            table_context = get_embedded_table_context(request.session_id, model=request.model)
             prompt = f"""
 Extraits du document pertinents (numérotés) :
 {context}
@@ -380,7 +425,9 @@ Après chaque affirmation qui s'appuie sur un extrait ci-dessus, ajoute immédia
 
     # ── Chemin A : données tabulaires ─────────────────────────
     else:
-        data_context = get_data_context(request.session_id)
+        # `request.model` conditionne le budget du contexte : un modèle local reçoit
+        # un aperçu borné là où une API en reçoit un complet (voir `prompt_budget`).
+        data_context = get_data_context(request.session_id, model=request.model)
         file_bytes, filename = get_file_bytes(request.session_id)
         yield _step("thinking", "Analyse de votre question…")
         intent = await to_thread(detect_intent, request.message, request.model)

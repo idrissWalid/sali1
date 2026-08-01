@@ -17,7 +17,7 @@ from enum import Enum
 
 
 class Famille(str, Enum):
-    """Déterminée automatiquement d'après la cible — l'utilisateur ne choisit pas."""
+    """Déterminée d'après la cible, indépendamment de l'estimateur éventuellement imposé."""
 
     REGRESSION = "regression"
     CLASSIFICATION = "classification"

@@ -381,16 +381,23 @@ def get_dataset(session_id: str, dataset_id: str | None = None):
     return file_bytes, row["filename"], profile, stats
 
 
-def get_embedded_table_context(session_id: str) -> str:
+def get_embedded_table_context(session_id: str, model: str | None = None) -> str:
     """Bloc de contexte texte pour le prompt du chat, quand une session document
     a un tableau de données attaché : permet de répondre avec des chiffres exacts
-    plutôt que de deviner à partir du résumé narratif."""
+    plutôt que de deviner à partir du résumé narratif.
+
+    Construit dans le budget de contexte du modèle choisi (voir `prompt_budget`) :
+    ici le tableau PARTAGE la place avec les extraits du document retrouvés par le
+    RAG, la marge est donc plus étroite qu'en session tabulaire."""
+    from app.services.prompt_budget import bloc_apercu, profil_modele, stats_essentielles
+
     _, filename, profile, stats = get_embedded_table(session_id)
     if not profile:
         return ""
 
     overview = stats.get("dataset_overview", {}) if stats else {}
-    variables = stats.get("variables", {}) if stats else {}
+    variables = stats_essentielles(stats.get("variables", {}) if stats else {})
+    profil = profil_modele(model)
 
     return f"""
 TABLEAU DE DONNÉES DÉTECTÉ DANS CE DOCUMENT ({filename}) :
@@ -401,12 +408,21 @@ STATISTIQUES PAR VARIABLE :
 {json.dumps(variables, ensure_ascii=False, indent=2)}
 
 APERÇU (5 premières lignes) :
-{json.dumps(profile['preview'], ensure_ascii=False, indent=2)}
+{bloc_apercu(profile.get('preview'), budget=profil.budget_contexte // 4)}
 
 Si la question porte sur ces données chiffrées, réponds en te basant sur ce tableau (calculs, comparaisons, tendances), en plus des extraits textuels du document.
 """
 
-def get_data_context(session_id: str) -> str:
+def get_data_context(session_id: str, model: str | None = None) -> str:
+    """Contexte de données injecté dans le prompt du chat.
+
+    Reconstruit à CHAQUE message : tout caractère superflu ici est rejoué à chaque
+    tour, sur tous les backends. D'où la construction dans le budget du modèle
+    choisi (voir `prompt_budget`) plutôt qu'un dump intégral raccourci en aval par
+    une coupe aveugle au milieu du JSON.
+    """
+    from app.services.prompt_budget import bloc_apercu, profil_modele, stats_essentielles
+
     session = get_session(session_id)
     if not session or not session.get("data_profile"):
         return ""
@@ -415,8 +431,9 @@ def get_data_context(session_id: str) -> str:
     stats = session["data_stats"]
 
     overview = stats.get("dataset_overview", {}) if stats else {}
-    variables = stats.get("variables", {}) if stats else {}
+    variables = stats_essentielles(stats.get("variables", {}) if stats else {})
     missing = stats.get("missing", {}) if stats else {}
+    profil = profil_modele(model)
 
     return f"""
 CONTEXTE DES DONNÉES EN SESSION :
@@ -435,7 +452,7 @@ VALEURS MANQUANTES :
 {json.dumps(missing, ensure_ascii=False, indent=2) if missing else "Aucune."}
 
 APERÇU (5 premières lignes) :
-{json.dumps(profile['preview'], ensure_ascii=False, indent=2)}
+{bloc_apercu(profile.get('preview'), budget=profil.budget_contexte // 3)}
 """
 
 def save_message_to_report(session_id: str, role: str, text: str, images: list = [], sources: list = []):

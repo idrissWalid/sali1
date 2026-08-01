@@ -97,15 +97,22 @@ def ask_vision(prompt: str, images: list[bytes], model: str | None = None,
 
     logger.info("Vision via %s (%s) sur %d image(s)", provider, nom_modele, len(images))
 
+    # Le prompt système de l'agent, remis à chaque fournisseur dans son emplacement
+    # dédié. Auparavant seul le bras Gemini le posait (il le concaténait lui-même) :
+    # lire le même scan avec Claude, GPT-4o ou un modèle vision local donnait donc
+    # une réponse sans les règles de langue et de style de l'application.
+    from app.services.gemini_service import build_system_prompt
+    system = build_system_prompt()
+
     if provider == "gemini":
         from app.services.gemini_service import ask_gemini_vision
-        return ask_gemini_vision(prompt, images, history=history, model=nom_modele)
+        return ask_gemini_vision(prompt, images, history=history, model=nom_modele, system=system)
     if provider == "anthropic":
-        return _vision_anthropic(prompt, images, nom_modele, history)
+        return _vision_anthropic(prompt, images, nom_modele, history, system=system)
     if provider == "ollama":
-        return _vision_ollama(prompt, images, nom_modele)
+        return _vision_ollama(prompt, images, nom_modele, system=system)
     if provider in ("openai", "groq", "mistral"):
-        return _vision_openai_compatible(prompt, images, nom_modele, history, provider)
+        return _vision_openai_compatible(prompt, images, nom_modele, history, provider, system=system)
 
     raise VisionNonSupportee(
         f"Le fournisseur « {provider} » n'a pas de lecture d'images câblée dans "
@@ -119,7 +126,7 @@ def _b64(images: list[bytes]) -> list[str]:
 
 
 def _vision_openai_compatible(prompt: str, images: list[bytes], model: str,
-                              history: list, provider: str) -> str:
+                              history: list, provider: str, system: str | None = None) -> str:
     """Format « image_url » avec data URI, commun à OpenAI, Groq et Mistral."""
     import requests
 
@@ -140,6 +147,8 @@ def _vision_openai_compatible(prompt: str, images: list[bytes], model: str,
         })
 
     messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
     for msg in (history or [])[-10:]:
         role = "assistant" if msg["role"] in ("model", "assistant") else "user"
         messages.append({"role": role, "content": msg["content"]})
@@ -155,7 +164,8 @@ def _vision_openai_compatible(prompt: str, images: list[bytes], model: str,
     return response.json()["choices"][0]["message"]["content"]
 
 
-def _vision_anthropic(prompt: str, images: list[bytes], model: str, history: list) -> str:
+def _vision_anthropic(prompt: str, images: list[bytes], model: str, history: list,
+                      system: str | None = None) -> str:
     """Format « source.base64 » propre à l'API Messages d'Anthropic."""
     import requests
 
@@ -176,9 +186,13 @@ def _vision_anthropic(prompt: str, images: list[bytes], model: str, history: lis
         messages.append({"role": role, "content": msg["content"]})
     messages.append({"role": "user", "content": contenu})
 
+    payload = {"model": model, "max_tokens": 2048, "messages": messages}
+    if system:
+        payload["system"] = system
+
     response = requests.post(
         "https://api.anthropic.com/v1/messages",
-        json={"model": model, "max_tokens": 2048, "messages": messages},
+        json=payload,
         headers={"x-api-key": api_key, "anthropic-version": "2023-06-01",
                  "Content-Type": "application/json"},
         timeout=120,
@@ -187,7 +201,8 @@ def _vision_anthropic(prompt: str, images: list[bytes], model: str, history: lis
     return response.json()["content"][0]["text"]
 
 
-def _vision_ollama(prompt: str, images: list[bytes], model: str) -> str:
+def _vision_ollama(prompt: str, images: list[bytes], model: str,
+                   system: str | None = None) -> str:
     """Ollama accepte les images en base64 dans le champ `images` de /api/generate.
 
     Rien ne sort de la machine : c'est l'option souveraine quand le document est
@@ -197,16 +212,20 @@ def _vision_ollama(prompt: str, images: list[bytes], model: str) -> str:
 
     from app.services.ollama_service import OLLAMA_API_URL
 
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "images": _b64(images),
+        "stream": False,
+        "think": False,
+        "keep_alive": "5m",
+    }
+    if system:
+        payload["system"] = system
+
     response = requests.post(
         OLLAMA_API_URL,
-        json={
-            "model": model,
-            "prompt": prompt,
-            "images": _b64(images),
-            "stream": False,
-            "think": False,
-            "keep_alive": "5m",
-        },
+        json=payload,
         timeout=300,
     )
     response.raise_for_status()
