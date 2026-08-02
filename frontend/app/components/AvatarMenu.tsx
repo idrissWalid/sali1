@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 interface AvatarMenuProps {
   isOpen: boolean;
   onClose: () => void;
-  anchorRef: React.RefObject<HTMLDivElement | null>;
+  anchorRef: React.RefObject<HTMLButtonElement | null>;
 }
 
 export default function AvatarMenu({ isOpen, onClose, anchorRef }: AvatarMenuProps) {

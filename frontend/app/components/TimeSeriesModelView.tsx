@@ -4,8 +4,9 @@ import React from "react";
 import { toggleTheme, useTheme } from "@/hooks/use-theme";
 import {
   ArrowLeft, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Sun, Moon,
-  TrendingUp, Target, Gauge, Activity, BarChart3, Download,
+  TrendingUp, Target, Gauge, Activity, BarChart3,
 } from "lucide-react";
+import { Download } from "@/components/animate-ui/icons/download";
 import {
   ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
@@ -258,7 +259,7 @@ function ForecastTable({ rows, nomModele, delay }: { rows: ForecastPoint[]; nomM
           onClick={() => telechargerPrevisions(rows, nomModele)}
           className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-[#222] px-3 py-1.5 text-xs font-medium shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-[#2a2a2a]"
         >
-          <Download size={14} /> Télécharger (CSV)
+          <Download animateOnHover size={14} /> Télécharger (CSV)
         </button>
       }
     >
@@ -354,6 +355,7 @@ export default function TimeSeriesModelView({ model, onBack }: { model: ModelInf
             <StatutBadge statut={r.statut_final} />
             <button
               onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Activer le thème clair" : "Activer le thème sombre"}
               className="p-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center justify-center text-sm font-medium"
             >
               {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}

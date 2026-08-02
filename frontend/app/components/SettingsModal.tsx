@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import Modal from "./Modal";
 import { API_URL } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -42,12 +43,14 @@ export default function SettingsModal({
   const [aiModel, setAiModel] = useState(selectedModel || "");
   const [textAnimations, setTextAnimations] = useState(true);
   const [showToast, setShowToast] = useState(false);
+  const [savedPreferences, setSavedPreferences] = useState({ language: DEFAULT_USER_PREFERENCES.language, textAnimations: DEFAULT_USER_PREFERENCES.textAnimations });
 
   const [modelSource, setModelSource] = useState<"opensource" | "api">("opensource");
   const [isApiDialogOpen, setIsApiDialogOpen] = useState(false);
   const [apiProvider, setApiProvider] = useState("gemini");
   const [apiModelName, setApiModelName] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
   const [apiSaving, setApiSaving] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
@@ -58,6 +61,7 @@ export default function SettingsModal({
       const preferences = readUserPreferences();
       setLang(preferences.language);
       setTextAnimations(preferences.textAnimations);
+      setSavedPreferences({ language: preferences.language, textAnimations: preferences.textAnimations });
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [isOpen]);
@@ -92,6 +96,11 @@ export default function SettingsModal({
     { id: "general", label: "Général", description: "Expérience" },
     { id: "model", label: "Modèle IA", description: "Intelligence" },
   ];
+  const hasUnsavedChanges = lang !== savedPreferences.language || textAnimations !== savedPreferences.textAnimations;
+  const handleClose = () => {
+    if (hasUnsavedChanges && !window.confirm("Abandonner les modifications non enregistrées ?")) return;
+    onClose();
+  };
 
   const tabIcon = (tab: TabType) => {
     if (tab === "general") return <svg viewBox="0 0 24 24" fill="none"><path d="M12 15.25a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Z" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06-2.1 2.1-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51v.09h-3v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06-2.1-2.1.06-.06A1.65 1.65 0 0 0 7.22 15a1.65 1.65 0 0 0-1.51-1H5.6v-3h.11a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06 2.1-2.1.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1-1.51V4.8h3v.1a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06 2.1 2.1-.06.06A1.65 1.65 0 0 0 19.4 10a1.65 1.65 0 0 0 1.51 1H21v3h-.09a1.65 1.65 0 0 0-1.51 1Z" /></svg>;
@@ -109,7 +118,7 @@ export default function SettingsModal({
           100% { opacity: 0; transform: translate(-50%, 20px) scale(0.95); }
         }
       `}</style>
-      <Modal isOpen={isOpen} onClose={onClose} title="Préférences" maxWidth="720px">
+      <Modal isOpen={isOpen} onClose={handleClose} title="Préférences" maxWidth="720px">
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="Sections des préférences">
           {tabs.map((tab) => {
@@ -134,8 +143,9 @@ export default function SettingsModal({
             <div className="settings-section">
               <div className="settings-section__heading"><h3>Interface</h3><p>Les réglages de votre espace de travail.</p></div>
               <div className="settings-field">
-                <label>Langue de l’interface</label>
+                <label htmlFor="interface-language">Langue de l’interface</label>
                 <select
+                  id="interface-language"
                   value={lang}
                   onChange={(e) => setLang(e.target.value as InterfaceLanguage)}
                   className="settings-select"
@@ -170,8 +180,9 @@ export default function SettingsModal({
               <div className="settings-section__heading"><h3>Modèle de langage</h3><p>Choisissez la source et le modèle utilisé par Sali AI.</p></div>
               
               <div className="settings-field">
-                <label>Source du modèle</label>
+                <label htmlFor="model-source">Source du modèle</label>
                 <select
+                  id="model-source"
                   value={modelSource}
                   onChange={(e) => setModelSource(e.target.value as "opensource" | "api")}
                   className="settings-select"
@@ -183,8 +194,9 @@ export default function SettingsModal({
 
               {modelSource === "opensource" ? (
                 <div className="settings-field">
-                  <label>Modèle de langage</label>
+                  <label htmlFor="language-model">Modèle de langage</label>
                   <select
+                    id="language-model"
                     value={selectedModel || aiModel}
                     onChange={(e) => {
                       const val = e.target.value;
@@ -235,8 +247,9 @@ export default function SettingsModal({
 
       {/* Footer */}
       <div className="settings-footer">
+        {hasUnsavedChanges && <span className="settings-unsaved" role="status">Modifications non enregistrées</span>}
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="settings-cancel-button"
         >
           Annuler
@@ -244,6 +257,7 @@ export default function SettingsModal({
         <StatefulSaveButton
           onSave={() => new Promise<void>((resolve) => {
             saveUserPreferences({ language: lang, textAnimations });
+            setSavedPreferences({ language: lang, textAnimations });
             setTimeout(() => {
               resolve();
               setTimeout(onClose, 800);
@@ -369,18 +383,26 @@ export default function SettingsModal({
             </div>
             <div className="grid gap-3">
               <Label htmlFor="api-key">Clé API</Label>
-              <Input
-                id="api-key"
-                type="password"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="x7K9pL2mQ8vR4tY1nZ6bW3jD5hF0sA2c"
-                style={{ background: "var(--bg-app)", color: "var(--text-main)", borderColor: "var(--border-color)" }}
-                required
-              />
+              <div className="relative">
+                <Input
+                  id="api-key"
+                  type={showApiKey ? "text" : "password"}
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="Saisissez votre clé secrète"
+                  autoComplete="off"
+                  aria-describedby={apiError ? "api-key-error" : "api-key-help"}
+                  style={{ background: "var(--bg-app)", color: "var(--text-main)", borderColor: "var(--border-color)", paddingRight: "44px" }}
+                  required
+                />
+                <button type="button" className="api-key-visibility" onClick={() => setShowApiKey((visible) => !visible)} aria-label={showApiKey ? "Masquer la clé API" : "Afficher la clé API"}>
+                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              <small id="api-key-help" className="text-[11px] text-[var(--text-muted)]">La clé est vérifiée avant son enregistrement côté serveur.</small>
             </div>
             {apiError && (
-              <div style={{ color: "#ea4335", fontSize: "12px" }}>{apiError}</div>
+              <div id="api-key-error" role="alert" style={{ color: "var(--status-danger)", fontSize: "12px" }}>{apiError}</div>
             )}
           </div>
           <div className="flex flex-col-reverse gap-2 border-t border-[var(--border-muted)] pt-4 sm:flex-row sm:justify-end">

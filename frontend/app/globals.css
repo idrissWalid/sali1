@@ -22,6 +22,17 @@
   --scrollbar-thumb: rgba(188, 199, 228, 0.2);
   --sali-header-chip: #F9F4ED;
   --sali-header-mark: #7A8A5E;
+  --surface-app: var(--bg-app);
+  --surface-panel: var(--bg-panel);
+  --surface-raised: #191c23;
+  --action-primary: #9eae79;
+  --action-primary-hover: #b4c58e;
+  --status-info: #76a9fa;
+  --status-success: #5fbf8f;
+  --status-warning: #e3a45b;
+  --status-danger: #ef6b67;
+  --focus-ring: #b8c990;
+  --shadow-panel: 0 16px 44px rgba(0, 0, 0, 0.2);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -73,6 +84,17 @@
   --scrollbar-thumb: rgba(24, 24, 27, 0.15);
   --sali-header-chip: #201E1D;
   --sali-header-mark: #7A8A5E;
+  --surface-app: var(--bg-app);
+  --surface-panel: var(--bg-panel);
+  --surface-raised: #ffffff;
+  --action-primary: #667549;
+  --action-primary-hover: #53613a;
+  --status-info: #2563eb;
+  --status-success: #18794e;
+  --status-warning: #9a5b13;
+  --status-danger: #c43d38;
+  --focus-ring: #667549;
+  --shadow-panel: 0 14px 36px rgba(30, 35, 25, 0.08);
 }
 
 .sali-brand { display: flex; align-items: center; gap: 10px; }
@@ -246,9 +268,166 @@ button, input, textarea {
   font-family: inherit;
 }
 
-button:focus-visible, input:focus-visible, textarea:focus-visible {
-  outline: 2px solid var(--accent-color);
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible, [role="button"]:focus-visible {
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+  color: var(--text-main);
+  background: var(--surface-app);
+  transition: background-color 200ms ease, color 200ms ease;
+}
+.skip-link { position: fixed; top: 8px; left: 8px; z-index: 99999; translate: 0 -160%; padding: 10px 14px; border-radius: 10px; color: var(--bg-app); background: var(--action-primary); font-weight: 700; }
+.skip-link:focus { translate: 0; }
+.app-topbar { position: relative; z-index: 20; display: flex; min-height: 60px; flex-shrink: 0; align-items: center; justify-content: space-between; padding: 0 20px; border-bottom: 1px solid var(--border-color); background: color-mix(in srgb, var(--surface-panel) 90%, transparent); backdrop-filter: blur(14px); }
+.app-topbar__actions { display: flex; align-items: center; gap: 6px; }
+.app-topbar__action { min-height: 40px; }
+.app-workspace { position: relative; display: flex; flex: 1; min-height: 0; overflow: hidden; padding: 10px 8px 0; }
+.panel-toggle { position: absolute; top: 20px; z-index: 20; display: grid; width: 34px; height: 34px; place-items: center; padding: 0; border: 1px solid var(--border-color); border-radius: 10px; color: var(--text-muted); background: color-mix(in srgb, var(--bg-panel) 92%, transparent); box-shadow: 0 4px 14px rgba(0, 0, 0, .12); backdrop-filter: blur(8px); transition: color 160ms ease, background 160ms ease, transform 160ms ease; }
+.panel-toggle:hover { color: var(--text-main); background: var(--bubble-ai); transform: translateY(-1px); }
+.panel-toggle:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+.panel-toggle--left { left: 18px; }
+.panel-toggle--right { right: 18px; }
+.panel-toggle__mirrored { display: grid; place-items: center; transform: scaleX(-1); }
+.workspace-separator { position: relative; cursor: col-resize; background: transparent; transition: background 160ms ease; }
+.workspace-separator::after { position: absolute; inset: 30% 3px; content: ""; border-radius: 99px; background: transparent; transition: background 160ms ease; }
+.workspace-separator:hover::after, .workspace-separator:focus-visible::after { background: var(--action-primary); }
+.app-disclaimer { display: flex; min-height: 28px; flex-shrink: 0; align-items: center; justify-content: center; padding: 0 16px; color: var(--text-dim); font-size: 11px; text-align: center; }
+.mobile-workspace-nav { display: none; }
+
+.chat-reading-column { width: min(100%, 780px); margin-inline: auto; }
+.chat-message-row { width: min(100%, 780px); margin-inline: auto; }
+.icon-button { display: inline-grid; width: 44px; height: 44px; place-items: center; border: 0; border-radius: 50%; color: var(--text-muted); background: transparent; transition: color 160ms ease, background 160ms ease; }
+.icon-button:hover { color: var(--text-main); background: var(--bubble-ai); }
+.kbd-hint { position: absolute; z-index: 30; right: 8px; bottom: calc(100% + 6px); pointer-events: none; opacity: 0; translate: 0 3px; padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 5px; color: var(--text-muted); background: var(--surface-raised); box-shadow: var(--shadow-panel); font-size: 9px; line-height: 1; white-space: nowrap; transition: opacity 140ms ease, translate 140ms ease; }
+.has-kbd-hint { position: relative; }
+.has-kbd-hint:hover .kbd-hint, .has-kbd-hint:focus-within .kbd-hint { opacity: 1; translate: 0; }
+.chat-btn-send, .chat-btn-mic { width: 44px !important; height: 44px !important; }
+.chat-panel-body { min-height: 0; }
+.chat-composer { position: relative; z-index: 5; }
+.chat-panel { display: flex; min-height: 0; overflow: hidden; }
+.chat-panel > .chat-panel-body { flex: 1 1 0; min-height: 0; }
+.chat-panel .chat-messages {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  touch-action: pan-y;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.chat-panel .chat-messages:not(.chat-messages--empty) {
+  display: flex;
+  flex-direction: column;
+}
+.chat-panel .chat-messages:not(.chat-messages--empty)::before {
+  min-height: 0;
+  flex: 1 1 auto;
+  content: "";
+}
+.settings-unsaved { margin-right: auto; color: var(--status-warning); font-size: 11px; font-weight: 650; }
+.api-key-visibility { position: absolute; top: 50%; right: 4px; display: grid; width: 36px; height: 36px; translate: 0 -50%; place-items: center; border: 0; border-radius: 8px; color: var(--text-muted); background: transparent; }
+.api-key-visibility:hover { color: var(--text-main); background: var(--bubble-ai); }
+.dashboard-search { display: flex; min-height: 44px; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--border-color); border-radius: 10px; color: var(--text-muted); background: var(--surface-app); }
+.dashboard-search:focus-within { border-color: var(--focus-ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus-ring) 18%, transparent); }
+.dashboard-search input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--text-main); background: transparent; font: inherit; font-size: 13px; }
+.dashboard-secondary-action { display: inline-flex; min-height: 44px; align-items: center; gap: 7px; padding: 0 13px; border: 1px solid var(--border-color); border-radius: 10px; color: var(--text-main); background: var(--surface-raised); font-size: 12px; font-weight: 650; }
+.dashboard-secondary-action:hover { border-color: var(--action-primary); }
+.dashboard-icon-action { width: 44px; height: 44px; padding: 0; }
+.dashboard-preview thead { position: sticky; top: 0; z-index: 2; }
+.dashboard-preview tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface-app) 48%, transparent); }
+
+@media (max-width: 1023px) {
+  .app-topbar { padding-inline: 14px; }
+  .app-topbar__action { width: 40px; padding-inline: 0 !important; justify-content: center; }
+  .app-topbar__action span { display: none; }
+  .mobile-workspace-nav { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 6px 8px 0; background: var(--surface-app); }
+  .mobile-workspace-nav button { display: flex; min-height: 42px; align-items: center; justify-content: center; gap: 7px; border: 1px solid transparent; border-radius: 10px; color: var(--text-muted); background: transparent; font: inherit; font-size: 12px; font-weight: 650; }
+  .mobile-workspace-nav button[aria-pressed="true"] { border-color: var(--border-color); color: var(--text-main); background: var(--accent-soft); }
+  .app-workspace { padding: 6px 8px 0; }
+  .workspace-panels { display: block !important; min-height: 0 !important; overflow: hidden; }
+  .workspace-panel { display: none !important; width: 100% !important; height: 100% !important; min-height: 0 !important; overflow: hidden !important; }
+  .workspace-panel.is-mobile-active { display: block !important; }
+  .workspace-separator { display: none !important; }
+  .panel-toggle { display: none; }
+  .workspace-panel--data > div,
+  .workspace-panel--chat > .chat-panel,
+  .workspace-panel--studio > .studio-panel { min-height: 0 !important; }
+  .sources-panel, .history-panel, .studio-panel {
+    touch-action: pan-y;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .studio-panel {
+    display: block !important;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+    padding-bottom: 16px;
+  }
+  .studio-panel > div:last-child { min-height: auto !important; }
+  .studio-panel > div:last-child > div:last-child {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .app-disclaimer { display: none; }
+  .chat-panel-body { min-height: 0; overflow: hidden; }
+  .chat-messages {
+    position: relative;
+    flex: 1 1 0 !important;
+    height: 0;
+    min-height: 0;
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+  /* Le composeur reste DANS le flux, comme sur desktop.
+     En `position: fixed`, il était ancré au bas du VIEWPORT tandis que la carte
+     du chat s'arrête, elle, au bas de son conteneur flex. Les deux repères ne
+     coïncident pas, et les `padding-bottom: 112px` censés compenser ne pouvaient
+     pas suivre : d'où le grand vide entre les messages et la zone de saisie sur
+     petit écran. Un frère flex `flex-shrink: 0` se colle au bas du panneau par
+     construction, quelle que soit la hauteur réelle — et évite au passage les
+     déboires classiques de `position: fixed` avec le clavier virtuel iOS. */
+  .chat-composer {
+    flex-shrink: 0;
+    margin: 0 !important;
+    padding: 10px max(8px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    border-top: 1px solid var(--border-muted);
+    background: var(--bg-chat);
+  }
+  .chat-input-bar {
+    width: min(100%, 780px);
+    margin-inline: auto;
+    background: var(--input-bg) !important;
+    backdrop-filter: none !important;
+  }
+}
+
+@media (max-width: 620px) {
+  .app-topbar { min-height: 54px; }
+  .sali-brand__name { font-size: 17px; }
+  .app-topbar__actions { gap: 2px; }
+  .app-topbar__action { width: 38px; min-height: 38px; }
+  .app-disclaimer { min-height: 24px; font-size: 9px; }
+  .chat-message-row { padding-inline: 2px; }
+  /* Plus de réserve basse : le composeur est redevenu un frère flex en flux
+     (voir le bloc ≤1023px), il n'y a donc plus rien à compenser sous les
+     messages. */
+  .chat-messages { padding: 16px 14px !important; }
+  .chat-messages--empty { padding: 0 !important; }
+  .welcome-panel { padding: 20px 16px 32px; }
+  .chat-empty-message { padding: 20px 16px 32px; }
+  .chat-input-bar { min-height: 56px !important; padding: 6px 7px 6px 16px !important; gap: 5px !important; }
+  .chat-source-chip { display: none !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
 
 ::selection { background: rgba(167, 181, 255, .28); color: var(--text-main); }
@@ -612,7 +791,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible {
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-.dark {
+/* Le thème est piloté par l'attribut `data-theme` (voir `hooks/use-theme.ts`),
+   jamais par une classe `.dark`. Sur le sélecteur `.dark` d'origine, ce bloc ne
+   s'appliquait donc JAMAIS : les variantes `dark:` fonctionnaient bien (le
+   @custom-variant ci-dessus est calé sur l'attribut) mais elles référençaient
+   des tokens restés aux valeurs du thème clair — d'où des composants shadcn
+   (Button, Input, Label, Dialog) rendus en couleurs claires dans l'app sombre.
+   Le sélecteur reproduit exactement la condition du @custom-variant. */
+.dark,
+[data-theme="dark"],
+:root:not([data-theme="light"]) {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);

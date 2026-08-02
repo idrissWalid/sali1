@@ -31,6 +31,7 @@ export default function ThemeToggleButton({ isDark, onClick }: ThemeToggleButton
           transition={{ duration: 0.35, ease: "easeInOut" }}
         />
         <motion.g
+          initial={{ opacity: isDark ? 1 : 0, scale: isDark ? 1 : 0.5 }}
           animate={{ opacity: isDark ? 1 : 0, scale: isDark ? 1 : 0.5 }}
           stroke="currentColor"
           strokeWidth="2"

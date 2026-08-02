@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { Caprasimo, Figtree, Google_Sans, Roboto, Roboto_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
+import { DEFAULT_THEME, THEME_BOOTSTRAP_SCRIPT } from "@/hooks/use-theme";
 import NgrokFetchPatch from "./components/NgrokFetchPatch";
 import PreferencesBootstrap from "./components/PreferencesBootstrap";
 
@@ -45,6 +46,11 @@ export default function RootLayout({
   return (
     <html
       lang="fr"
+      // Rendu serveur avec le thème par défaut ; le script ci-dessous le
+      // remplace par le thème persisté avant la peinture. `suppressHydration
+      // Warning` couvre cet écart volontaire entre HTML serveur et DOM client.
+      data-theme={DEFAULT_THEME}
+      suppressHydrationWarning
       className={cn(
         "font-sans",
         figtree.variable,
@@ -54,11 +60,19 @@ export default function RootLayout({
         robotoMono.variable,
       )}
     >
+      <head>
+        {/* Avant tout rendu : sans ce script, un utilisateur en thème clair voit
+            l'application s'afficher en sombre puis basculer à chaque chargement. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
+      </head>
       <body
         suppressHydrationWarning
         style={{
-          background: "#131314",
-          color: "#e3e3e3",
+          // Suivent le thème au lieu d'être figés en sombre : ces valeurs
+          // s'appliquent avant la feuille de styles et provoquaient un flash
+          // sombre systématique en mode clair.
+          background: "var(--bg-app)",
+          color: "var(--text-main)",
           fontFamily: "var(--font-figtree), sans-serif",
         }}
       >

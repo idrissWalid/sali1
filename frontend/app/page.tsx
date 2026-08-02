@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Plus, Settings2, Share2 } from "lucide-react";
-import { Panel, Group, Separator } from "react-resizable-panels";
+import { Database, MessageSquare, Plus, Settings2, Share2, Sparkles } from "lucide-react";
+import { Panel, Group, Separator, usePanelRef } from "react-resizable-panels";
 import Sidebar from "./components/Sidebar";
 import SourcesPanel from "./components/SourcesPanel";
 import ChatPanel from "./components/ChatPanel";
@@ -15,7 +15,10 @@ import Modal from "./components/Modal";
 import SourceHistoryDock from "./components/SourceHistoryDock";
 import SaliMark from "./components/SaliMark";
 import ThemeToggleButton from "./components/ThemeToggleButton";
+import { setTheme, useTheme } from "@/hooks/use-theme";
 import { API_URL } from "@/lib/api";
+import { PanelLeftOpen } from "@/components/animate-ui/icons/panel-left-open";
+import { PanelLeftClose } from "@/components/animate-ui/icons/panel-left-close";
 
 interface Source {
   name: string;
@@ -46,10 +49,31 @@ export default function Home() {
   const [sources, setSources] = useState<Source[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [initialMessage, setInitialMessage] = useState<{ role: "assistant"; text: string; isSummary?: boolean } | null>(null);
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  // Lu depuis <html>, pas depuis un état local : le dashboard et les vues de
+  // modèles écrivent le même attribut. Un état propre à cette page en faisait
+  // une seconde source de vérité, et son effet de montage réappliquait « dark »
+  // à chaque retour depuis le dashboard — écrasant le choix de l'utilisateur.
+  const theme = useTheme();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [leftTab, setLeftTab] = useState<"sources" | "history">("sources");
   const [openUpload, setOpenUpload] = useState<(() => void) | null>(null);
+  const [mobileView, setMobileView] = useState<"data" | "chat" | "studio">("chat");
+  const leftPanelRef = usePanelRef();
+  const studioPanelRef = usePanelRef();
+  const [isLeftPanelOpen, setIsLeftPanelOpen] = useState(true);
+  const [isStudioPanelOpen, setIsStudioPanelOpen] = useState(true);
+
+  const toggleLeftPanel = () => {
+    if (isLeftPanelOpen) leftPanelRef.current?.collapse();
+    else leftPanelRef.current?.expand();
+    setIsLeftPanelOpen((open) => !open);
+  };
+
+  const toggleStudioPanel = () => {
+    if (isStudioPanelOpen) studioPanelRef.current?.collapse();
+    else studioPanelRef.current?.expand();
+    setIsStudioPanelOpen((open) => !open);
+  };
 
   const registerUploadHandler = useCallback((handler: (() => void) | null) => {
     setOpenUpload(() => handler);
@@ -81,11 +105,7 @@ export default function Home() {
   const [isPageLoading, setIsPageLoading] = useState(true);
 
   // Anchor ref for positioning avatar dropdown
-  const avatarRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
-  }, [theme]);
+  const avatarRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     // Tant que la restauration initiale (lecture de active_session_id) n'est
@@ -101,14 +121,22 @@ export default function Home() {
     }
   }, [sessionId, isPageLoading]);
 
+  // État de la liste des sessions. Un échec ne se voyait nulle part : la barre
+  // latérale affichait « Aucune discussion enregistrée », strictement
+  // indiscernable d'un compte neuf, pendant que l'erreur partait dans la console.
+  const [sessionsState, setSessionsState] = useState<"loading" | "ready" | "error">("loading");
+
   const fetchSessions = async () => {
+    setSessionsState((etat) => (etat === "ready" ? etat : "loading"));
     try {
-      const apiUrl = API_URL;
-      const res = await fetch(`${apiUrl}/api/sessions`);
+      const res = await fetch(`${API_URL}/api/sessions`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setSessions(data || []);
+      setSessionsState("ready");
     } catch (err) {
       console.error("Erreur lors du chargement des sessions:", err);
+      setSessionsState("error");
     }
   };
 
@@ -302,22 +330,11 @@ export default function Home() {
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: "var(--bg-app)", color: "var(--text-main)", transition: "background-color 0.3s ease, color 0.3s ease", overflow: "hidden" }}>
+    <div className="app-shell">
+      <a className="skip-link" href="#main-workspace">Aller à la discussion</a>
 
       {/* TOPBAR */}
-      <div style={{
-        height: "60px",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "0 20px",
-        background: "color-mix(in srgb, var(--bg-panel) 88%, transparent)",
-        borderBottom: "1px solid rgba(255,255,255,0.07)",
-        backdropFilter: "blur(12px)",
-        flexShrink: 0,
-        position: "relative",
-        zIndex: 10,
-      }}>
+      <header className="app-topbar">
 
         {/* Gauche : logo Sali AI */}
         <div className="sali-brand" aria-label="Sali AI">
@@ -347,19 +364,19 @@ export default function Home() {
 
               const newTheme = theme === "dark" ? "light" : "dark";
 
+              // `setTheme` pose l'attribut ET le persiste, en un seul endroit.
+              // L'appel reste DANS la transition pour que le dévoilement
+              // circulaire capture bien le changement de couleurs.
               if (!document.startViewTransition) {
                 setTheme(newTheme);
                 return;
               }
 
-              document.startViewTransition(() => {
-                document.documentElement.setAttribute("data-theme", newTheme);
-                setTheme(newTheme);
-              });
+              document.startViewTransition(() => setTheme(newTheme));
             }}
           />
 
-          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          <div className="app-topbar__actions">
             {[
               {
                 label: "Nouvelle session", icon: Plus, action: () => {
@@ -373,7 +390,8 @@ export default function Home() {
               { label: "Partager", icon: Share2, action: () => setIsShareOpen(true) },
               { label: "Paramètres", icon: Settings2, action: () => setIsSettingsOpen(true) },
             ].map((btn, i) => (
-              <button key={i} onClick={btn.action}
+              <button key={i} onClick={btn.action} className="app-topbar__action"
+                aria-label={btn.label}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -403,14 +421,16 @@ export default function Home() {
                 }}
               >
                 <btn.icon size={15} strokeWidth={1.8} />
-                {btn.label}
+                <span>{btn.label}</span>
               </button>
             ))}
-            <div
+            <button
               ref={avatarRef}
               onClick={() => setIsAvatarOpen(!isAvatarOpen)}
+              aria-label="Ouvrir le menu du profil"
+              aria-expanded={isAvatarOpen}
               style={{
-                width: "34px", height: "34px",
+                width: "40px", height: "40px",
                 borderRadius: "50%",
                 background: "linear-gradient(135deg,#8ab4f8,#a78bfa)",
                 display: "flex", alignItems: "center", justifyContent: "center",
@@ -429,19 +449,42 @@ export default function Home() {
               }}
             >
               W
-            </div>
+            </button>
           </div>
 
           {/* Avatar Menu Dropdown Overlay */}
           <AvatarMenu isOpen={isAvatarOpen} onClose={() => setIsAvatarOpen(false)} anchorRef={avatarRef} />
         </div>
 
-      </div>
+      </header>
+
+      <nav className="mobile-workspace-nav" aria-label="Espaces de travail">
+        {([
+          { id: "data", label: "Données", icon: Database },
+          { id: "chat", label: "Chat", icon: MessageSquare },
+          { id: "studio", label: "Studio", icon: Sparkles },
+        ] as const).map((item) => (
+          <button key={item.id} type="button" aria-pressed={mobileView === item.id} onClick={() => setMobileView(item.id)}>
+            <item.icon size={17} aria-hidden="true" />
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </nav>
 
       {/* MAIN */}
-      <div style={{ display: "flex", flex: 1, overflow: "hidden", padding: "10px 8px 0 8px" }}>
-        <Group orientation="horizontal" style={{ width: "100%", height: "100%" }}>
-          <Panel defaultSize={22} minSize={15} style={{ height: "100%" }}>
+      <main id="main-workspace" className="app-workspace" style={{ display: "flex", alignItems: "center" }}>
+        <button type="button" className="panel-toggle panel-toggle--left" onClick={toggleLeftPanel}
+          aria-label={isLeftPanelOpen ? "Fermer le panneau Données" : "Ouvrir le panneau Données"} aria-expanded={isLeftPanelOpen}>
+          {isLeftPanelOpen ? <PanelLeftClose animateOnHover size={19} /> : <PanelLeftOpen animateOnHover size={19} />}
+        </button>
+        <button type="button" className="panel-toggle panel-toggle--right" onClick={toggleStudioPanel}
+          aria-label={isStudioPanelOpen ? "Fermer le panneau Studio" : "Ouvrir le panneau Studio"} aria-expanded={isStudioPanelOpen}>
+          <span className="panel-toggle__mirrored">
+            {isStudioPanelOpen ? <PanelLeftClose animateOnHover size={19} /> : <PanelLeftOpen animateOnHover size={19} />}
+          </span>
+        </button>
+        <Group orientation="horizontal" className="workspace-panels" style={{ width: "100%", height: "98%", margin: "auto" }}>
+          <Panel panelRef={leftPanelRef} defaultSize={22} minSize={15} collapsible collapsedSize={0} className={`workspace-panel workspace-panel--data${mobileView === "data" ? " is-mobile-active" : ""}`} style={{ height: "100%" }}>
             <div style={{
               height: "100%",
               display: "flex",
@@ -474,6 +517,8 @@ export default function Home() {
                     onRenameSession={handleRenameSession}
                     onNewSession={handleNewSession}
                     hideHeader={true}
+                    state={sessionsState}
+                    onRetry={fetchSessions}
                   />
                 </div>
               </div>
@@ -487,8 +532,8 @@ export default function Home() {
               </div>
             </div>
           </Panel>
-          <Separator style={{ width: "8px", background: "transparent", cursor: "col-resize", transition: "background 0.2s" }} />
-          <Panel defaultSize={55} minSize={30} style={{ height: "100%" }}>
+          <Separator className="workspace-separator" style={{ width: "8px" }} />
+          <Panel defaultSize={55} minSize={30} className={`workspace-panel workspace-panel--chat${mobileView === "chat" ? " is-mobile-active" : ""}`} style={{ width: "100%" }}>
             <ChatPanel
               sessionId={sessionId}
               sourceCount={sources.length}
@@ -507,17 +552,17 @@ export default function Home() {
               }}
             />
           </Panel>
-          <Separator style={{ width: "8px", background: "transparent", cursor: "col-resize", transition: "background 0.2s" }} />
-          <Panel defaultSize={23} minSize={15} style={{ height: "100%" }}>
+          <Separator className="workspace-separator" style={{ width: "8px" }} />
+          <Panel panelRef={studioPanelRef} defaultSize={23} minSize={15} collapsible collapsedSize={0} className={`workspace-panel workspace-panel--studio${mobileView === "studio" ? " is-mobile-active" : ""}`} style={{ height: "100%" }}>
             <StudioPanel sessionId={sessionId} generatedContent={generatedContent} chatModelPending={chatModelPending} modelsRefreshKey={modelsRefreshKey} />
           </Panel>
         </Group>
-      </div>
+      </main>
 
       {/* FOOTER */}
-      <div style={{ height: "28px", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, fontSize: "11px", color: "var(--text-dim)" }}>
+      <footer className="app-disclaimer">
         No-Code Data Intelligence peut se tromper. Veuillez donc vérifier ses réponses.
-      </div>
+      </footer>
 
       {/* Global Modals */}
       <SettingsModal

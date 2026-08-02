@@ -7,11 +7,12 @@ import {
   BarChart, Bar, PieChart, Pie, LineChart, Line, XAxis, YAxis, 
   CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell 
 } from "recharts";
-import { ArrowLeft, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy, Sun, Moon, Sparkles, Send, MessageCircleQuestion } from "lucide-react";
+import { ArrowLeft, ArrowUpDown, Loader2, Table2, BarChart3, Info, Rows3, Columns3, AlertTriangle, Copy, Sun, Moon, Sparkles, Send, MessageCircleQuestion, Search } from "lucide-react";
+import { Download } from "@/components/animate-ui/icons/download";
 import { API_URL } from "@/lib/api";
 
 // Colors for charts
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#d0ed57', '#a4de6c'];
+const COLORS = ['#4E79A7', '#59A14F', '#F28E2B', '#E15759', '#B07AA1', '#76B7B2', '#EDC948', '#FF9DA7', '#9C755F'];
 
 // Formatte les valeurs de l'axe Y de façon compacte (1200 -> "1,2k") pour éviter
 // les libellés à rallonge qui se chevauchent, et arrondit le bruit flottant.
@@ -87,6 +88,8 @@ export default function DashboardPage() {
   >([]);
   const [questionLoading, setQuestionLoading] = useState(false);
   const [questionError, setQuestionError] = useState<{ context: string; text: string } | null>(null);
+  const [variableFilter, setVariableFilter] = useState("");
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -173,6 +176,7 @@ export default function DashboardPage() {
       <div className="bg-red-50 text-red-600 p-6 rounded-xl border border-red-200">
         <h2 className="text-xl font-bold mb-2">Erreur</h2>
         <p>{error}</p>
+        <button type="button" onClick={() => window.location.reload()} className="mt-4 rounded-lg bg-red-600 px-4 py-2 font-semibold text-white">Réessayer</button>
       </div>
     </div>
   );
@@ -214,6 +218,24 @@ export default function DashboardPage() {
     : 0;
 
   const datasets = data.datasets ?? [];
+  const filteredVariables = Object.keys(variables).filter((name) => name.toLocaleLowerCase("fr").includes(variableFilter.toLocaleLowerCase("fr")));
+  const sortedPreview = sortConfig ? [...preview].sort((a, b) => {
+    const left = a[sortConfig.key];
+    const right = b[sortConfig.key];
+    const comparison = String(left ?? "").localeCompare(String(right ?? ""), "fr", { numeric: true });
+    return sortConfig.direction === "asc" ? comparison : -comparison;
+  }) : preview;
+  const exportPreview = () => {
+    const columns = Object.keys(preview[0] || {});
+    const escapeCell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+    const csv = [columns.map(escapeCell).join(","), ...sortedPreview.map((row) => columns.map((column) => escapeCell(row[column])).join(","))].join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${filename || "donnees"}-apercu.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   const handleChartQuestion = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -287,10 +309,10 @@ export default function DashboardPage() {
                 ))}
               </select>
             )}
-            <button onClick={toggleTheme} className="p-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center justify-center text-sm font-medium">
+            <button onClick={toggleTheme} aria-label={theme === "dark" ? "Activer le thème clair" : "Activer le thème sombre"} className="dashboard-icon-action bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center justify-center text-sm font-medium">
               {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}
             </button>
-            <button onClick={() => window.close()} className="px-4 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center gap-2 text-sm font-medium">
+            <button onClick={() => window.close()} className="min-h-11 px-4 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center gap-2 text-sm font-medium">
               <ArrowLeft className="w-4 h-4" /> {"Fermer l'onglet"}
             </button>
           </div>
@@ -312,9 +334,14 @@ export default function DashboardPage() {
               <h2 className="text-xl font-bold">Variables</h2>
             </div>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Sélectionnez une variable pour visualiser sa distribution.</p>
+            <label className="dashboard-search mb-4">
+              <Search className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only">Filtrer les variables</span>
+              <input value={variableFilter} onChange={(event) => setVariableFilter(event.target.value)} placeholder="Rechercher une variable" />
+            </label>
             
             <div className="dashboard-variable-list space-y-2 overflow-y-auto custom-scrollbar">
-              {Object.keys(variables).map((varName) => {
+              {filteredVariables.map((varName) => {
                 const varInfo = variables[varName] as { type?: string; pct_manquantes?: number } | undefined;
                 const isSelected = selectedVar === varName;
                 return (
@@ -607,18 +634,25 @@ export default function DashboardPage() {
 
         {/* Data Preview Table */}
         <div className="dashboard-panel dashboard-preview bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
-          <h2 className="text-xl font-bold mb-4">Aperçu des données (5 premières lignes)</h2>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-xl font-bold">Aperçu des données ({preview.length} premières lignes)</h2>
+            <button type="button" onClick={exportPreview} className="dashboard-secondary-action"><Download animateOnHover className="h-4 w-4" /> Exporter CSV</button>
+          </div>
           <div className="overflow-x-auto custom-scrollbar pb-4">
             <table className="w-full text-sm text-left">
               <thead className="text-xs uppercase bg-gray-50 dark:bg-[#222] text-gray-600 dark:text-gray-300">
                 <tr>
                   {Object.keys(preview[0] || {}).map(key => (
-                    <th key={key} className="px-6 py-4 font-semibold whitespace-nowrap">{key}</th>
+                    <th key={key} className="sticky top-0 px-6 py-4 font-semibold whitespace-nowrap">
+                      <button type="button" className="inline-flex items-center gap-2" onClick={() => setSortConfig((current) => ({ key, direction: current?.key === key && current.direction === "asc" ? "desc" : "asc" }))}>
+                        {key}<ArrowUpDown className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    </th>
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                {preview.map((row: Record<string, unknown>, i: number) => (
+                {sortedPreview.map((row: Record<string, unknown>, i: number) => (
                   <tr key={i} className="hover:bg-gray-50/50 dark:hover:bg-white/5 transition">
                     {Object.values(row).map((val: unknown, j: number) => (
                       <td key={j} className="px-6 py-4 whitespace-nowrap text-gray-700 dark:text-gray-400">
@@ -669,8 +703,7 @@ export default function DashboardPage() {
           .dashboard-main-grid { gap: 16px; }
           .dashboard-panel { padding: 18px; }
           .dashboard-chart-canvas { min-height: 360px; }
-          .dashboard-chart .recharts-legend-wrapper { display: none; }
-          .dashboard-chart .recharts-pie { transform: translateX(18%); }
+          .dashboard-chart .recharts-legend-wrapper { font-size: 11px; }
         }
         .custom-scrollbar::-webkit-scrollbar {
           height: 6px;

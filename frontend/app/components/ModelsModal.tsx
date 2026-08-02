@@ -4,7 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Modal from './Modal';
 import { API_URL } from '@/lib/api';
-import { Download, LayoutDashboard, Sparkles } from 'lucide-react';
+import { LayoutDashboard, Sparkles } from 'lucide-react';
+import { Download } from '@/components/animate-ui/icons/download';
 
 interface ModelInfo {
   id: string;
@@ -130,7 +131,7 @@ export default function ModelsModal({ sessionId, onClose, isOpen = true }: Model
                         onClick={() => handleDownload(model.id)}
                         className="flex-1 rounded-xl border border-[var(--border-color)] bg-transparent px-4 py-2.5 text-sm font-medium text-[var(--text-main)] transition-colors hover:bg-[var(--bg-panel)]"
                       >
-                        <Download size={16} strokeWidth={1.8} className="inline-block mr-1.5 align-text-bottom" /> Télécharger (.pkl)
+                        <Download animateOnHover size={16} strokeWidth={1.8} className="inline-block mr-1.5 align-text-bottom" /> Télécharger (.pkl)
                       </button>
                     )}
                   </div>

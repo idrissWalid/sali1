@@ -153,7 +153,7 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
   };
 
   return (
-    <div style={{
+    <div className="sources-panel" style={{
       height: "100%",
       display: "flex",
       flexDirection: "column",
@@ -402,6 +402,11 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
 
             <button
               onClick={() => onRemove(i)}
+              // Nommé avec la source concernée : plusieurs de ces boutons
+              // cohabitent dans la liste, un simple « Retirer » ne dirait pas
+              // lequel on s'apprête à supprimer.
+              aria-label={`Retirer la source « ${src.name} »`}
+              title={`Retirer « ${src.name} »`}
               style={{
                 color: "#555",
                 fontSize: "20px",

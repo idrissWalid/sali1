@@ -24,6 +24,19 @@ function interpretationDe(metrics: Record<string, unknown>): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
 
+const METRIC_HELP: Record<string, string> = {
+  accuracy: "Part des prédictions correctes — plus haut est généralement meilleur.",
+  precision: "Fiabilité des prédictions positives — plus haut est meilleur.",
+  recall: "Part des cas positifs détectés — plus haut est meilleur.",
+  f1: "Équilibre entre précision et rappel — plus haut est meilleur.",
+  f1_score: "Équilibre entre précision et rappel — plus haut est meilleur.",
+  mae: "Erreur absolue moyenne — plus bas est meilleur.",
+  mse: "Erreur quadratique moyenne — plus bas est meilleur.",
+  rmse: "Erreur moyenne dans l’unité de la cible — plus bas est meilleur.",
+  r2: "Part de la variance expliquée — une valeur proche de 1 est meilleure.",
+};
+const metricLabel = (key: string) => key.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+
 export default function ModelDashboard() {
   const { modelId } = useParams<{ modelId: string }>();
   const [model, setModel] = useState<ModelInfo | null>(null);
@@ -170,6 +183,7 @@ export default function ModelDashboard() {
           <div className="flex gap-2">
             <button
               onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Activer le thème clair" : "Activer le thème sombre"}
               className="p-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center justify-center text-sm font-medium"
             >
               {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}
@@ -230,7 +244,10 @@ export default function ModelDashboard() {
                       key={k}
                       className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 dark:bg-[#222] px-3.5 py-2.5 text-sm"
                     >
-                      <span className="text-gray-500 dark:text-gray-400">{k}</span>
+                      <span className="min-w-0 text-gray-500 dark:text-gray-400">
+                        <span className="block font-medium text-gray-700 dark:text-gray-300">{metricLabel(k)}</span>
+                        {METRIC_HELP[k.toLowerCase()] && <small className="mt-0.5 block max-w-[240px] text-[10px] leading-4 text-gray-400">{METRIC_HELP[k.toLowerCase()]}</small>}
+                      </span>
                       <span className="font-mono font-semibold text-gray-900 dark:text-gray-100">
                         {typeof v === 'number' ? v.toFixed(4) : String(v)}
                       </span>
@@ -272,13 +289,16 @@ export default function ModelDashboard() {
                   </div>
                 )}
 
-                <div className="mt-2 pt-4 border-t border-gray-100 dark:border-gray-800">
+                <div className="mt-2 flex flex-wrap gap-2 pt-4 border-t border-gray-100 dark:border-gray-800">
                   <button
                     type="submit"
                     disabled={predicting}
                     className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold rounded-xl shadow-sm transition flex items-center gap-2 text-sm"
                   >
                     {predicting ? <><Loader2 className="w-4 h-4 animate-spin" /> Calcul en cours…</> : "Générer la prédiction"}
+                  </button>
+                  <button type="button" onClick={() => { setFormData({}); setPrediction(null); }} className="min-h-11 rounded-xl border border-gray-200 px-5 py-2.5 text-sm font-semibold transition hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-[#222]">
+                    Réinitialiser
                   </button>
                 </div>
               </form>

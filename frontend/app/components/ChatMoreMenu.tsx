@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { Download } from "@/components/animate-ui/icons/download";
 
 interface Message {
   role: "user" | "assistant";
@@ -136,8 +137,8 @@ export default function ChatMoreMenu({ isOpen, onClose, anchorRef, messages, onC
       `}</style>
 
       {[
-        { label: "Exporter en Markdown", action: exportMarkdown },
-        { label: "Exporter en HTML", action: exportHTML },
+        { label: "Exporter en Markdown", action: exportMarkdown, isDownload: true },
+        { label: "Exporter en HTML", action: exportHTML, isDownload: true },
         {
           label: "Vider la discussion",
           action: () => {
@@ -160,12 +161,16 @@ export default function ChatMoreMenu({ isOpen, onClose, anchorRef, messages, onC
             color: item.isRed ? "#ea4335" : "var(--text-main)",
             fontSize: "13px",
             textAlign: "left",
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
             cursor: "pointer",
             transition: "background 0.15s",
           }}
           onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bubble-ai)")}
           onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
         >
+          {item.isDownload && <Download animateOnHover size={15} aria-hidden="true" />}
           {item.label}
         </button>
       ))}

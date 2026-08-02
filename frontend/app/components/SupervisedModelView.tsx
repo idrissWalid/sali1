@@ -5,8 +5,9 @@ import { toggleTheme, useTheme } from "@/hooks/use-theme";
 import { API_URL } from "@/lib/api";
 import {
   ArrowLeft, CheckCircle2, XCircle, AlertTriangle, MinusCircle, Sun, Moon,
-  Target, Gauge, Trophy, Timer, FlaskConical, BarChart3, Download, Loader2,
+  Target, Gauge, Trophy, Timer, FlaskConical, BarChart3, Loader2,
 } from "lucide-react";
+import { Download } from "@/components/animate-ui/icons/download";
 import {
   Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid,
 } from "recharts";
@@ -631,11 +632,12 @@ export default function SupervisedModelView({ model, onBack }: { model: ModelInf
                 className="px-4 py-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center gap-2 text-sm font-medium"
                 title="Pipeline scikit-learn sérialisé (encodage inclus) — s'utilise avec joblib.load()"
               >
-                <Download size={15} /> Exporter (.pkl)
+                <Download animateOnHover size={15} /> Exporter (.pkl)
               </a>
             )}
             <button
               onClick={toggleTheme}
+              aria-label={theme === "dark" ? "Activer le thème clair" : "Activer le thème sombre"}
               className="p-2 bg-white dark:bg-[#222] border border-gray-200 dark:border-gray-800 rounded-lg shadow-sm hover:bg-gray-50 dark:hover:bg-[#333] transition flex items-center justify-center text-sm font-medium"
             >
               {theme === "dark" ? <Sun className="w-4 h-4 text-gray-400" /> : <Moon className="w-4 h-4 text-gray-500" />}

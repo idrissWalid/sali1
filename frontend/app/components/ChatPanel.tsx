@@ -297,7 +297,8 @@ function renderMarkdown(
         // En mode proposition, on rend une bulle cliquable
         if (shouldInclude()) {
           nodes.push(
-            <div
+            <button
+              type="button"
               key={i}
               onClick={() => onPropositionClick(listContent.replace(/\*\*/g, ""))} // Enlève le gras pour l'input
               style={{
@@ -314,6 +315,7 @@ function renderMarkdown(
                 display: "inline-block",
                 width: "fit-content",
                 maxWidth: "95%",
+                textAlign: "left",
               }}
               onMouseEnter={e => {
                 e.currentTarget.style.background = "var(--accent-color)";
@@ -325,7 +327,7 @@ function renderMarkdown(
               }}
             >
               {renderInlineMarkdown(listContent, sources, onSourceClick)}
-            </div>
+            </button>
           );
         }
         continue;
@@ -659,9 +661,10 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
   ];
 
   return (
-    <div style={{
+    <div className="chat-panel" style={{
       flex: 1,
       height: "100%",
+      minHeight: 0,
       display: "flex",
       flexDirection: "column",
       overflow: "hidden",
@@ -688,6 +691,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         <div style={{ display: "flex", gap: "8px" }}>
           {loading && (
             <button
+              aria-label="Interrompre la réponse"
               onClick={() => {
                 if (abortControllerRef.current) abortControllerRef.current.abort();
                 setLoading(false);
@@ -711,6 +715,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           )}
           <button
             onClick={() => setIsSettingsOpen(true)}
+            aria-label="Réglages de la discussion"
             style={{
               width: "36px", height: "36px", borderRadius: "50%",
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -726,6 +731,8 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           <button
             ref={moreMenuRef}
             onClick={() => setIsMoreMenuOpen(!isMoreMenuOpen)}
+            aria-label="Plus d’options"
+            aria-expanded={isMoreMenuOpen}
             style={{
               width: "36px", height: "36px", borderRadius: "50%",
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -751,10 +758,20 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       />
 
       {/* Zone messages + input flottant */}
-      <div style={{ flex: 1, position: "relative", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="chat-panel-body" style={{ flex: 1, minHeight: 0, position: "relative", display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
         {/* Messages */}
+        {/* `role="log"` annonce les réponses de l'agent aux lecteurs d'écran au
+            fil de leur arrivée. Sans lui, l'indicateur d'étapes plus bas était
+            la SEULE chose annoncée : l'utilisateur entendait « Interprétation
+            des résultats… » puis plus rien, la réponse elle-même restant muette.
+            `aria-relevant="additions"` limite l'annonce aux messages ajoutés,
+            pour ne pas relire tout l'historique à chaque tour. */}
         <div
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions"
+          aria-label="Conversation avec l'agent"
           className={messages.length === 0 ? "chat-messages chat-messages--empty" : "chat-messages"}
           style={{ flex: 1, overflowY: "auto", padding: "24px", paddingBottom: "24px", minHeight: 0 }}
         >
@@ -771,6 +788,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
 
           {sessionTitle && messages.length > 0 && (
             <h1
+              className="chat-reading-column"
               style={{
                 fontSize: "28px",
                 fontWeight: 700,
@@ -785,13 +803,15 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
             </h1>
           )}
 
+          {/* renderMarkdown reçoit sendMessage comme callback ; aucune ref n'est lue
+              pendant ce rendu, elles ne le sont qu'à l'exécution du callback. */}
+          {/* eslint-disable-next-line react-hooks/refs */}
           {messages.map((msg, i) => (
-            <div key={i} style={{
+            <div key={i} className="chat-message-row" style={{
               display: "flex",
               flexDirection: "row",
               alignItems: "flex-start",
               justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
-              width: msg.role === "assistant" ? "90%" : "100%",
               marginBottom: "24px",
               animation: "msgFadeIn 0.25s ease-out both",
             }}>
@@ -949,7 +969,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
           ))}
 
           {loading && (
-            <div style={{ display: "flex", marginBottom: "24px", animation: "msgFadeIn 0.25s ease-out both" }}>
+            <div className="chat-message-row" role="status" aria-live="polite" aria-atomic="true" style={{ display: "flex", marginBottom: "24px", animation: "msgFadeIn 0.25s ease-out both" }}>
               <div style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 marginRight: "10px", flexShrink: 0,
@@ -1016,7 +1036,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         </div>
 
         {/* Zone saisie premium : elle ne recouvre jamais les messages. */}
-        <div style={{
+        <div className="chat-composer" style={{
           flexShrink: 0,
           margin: "0 2% 6px",
         }}>
@@ -1149,6 +1169,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
               onClick={toggleRecording}
               disabled={loading}
               title={isRecording ? "Arrêter l'enregistrement" : "Saisie vocale"}
+              aria-label={isRecording ? "Arrêter l’enregistrement vocal" : "Démarrer la saisie vocale"}
               className={`chat-btn-mic${isRecording ? " chat-btn-mic--recording" : ""}`}
             >
               {isRecording ? (
@@ -1164,15 +1185,19 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
             </button>
 
             {/* Send button */}
-            <button
-              onClick={send}
-              disabled={!input.trim() || !sessionId || loading}
-              className="chat-btn-send"
-            >
-              <svg width="18" height="18" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" viewBox="0 0 24 24">
-                <path d="M22 2 11 13" /><path d="m22 2-7 20-4-9-9-4 20-7Z" />
-              </svg>
-            </button>
+            <span className="has-kbd-hint">
+              <button
+                onClick={send}
+                disabled={!input.trim() || !sessionId || loading}
+                className="chat-btn-send"
+                aria-label="Envoyer le message"
+              >
+                <svg width="18" height="18" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M22 2 11 13" /><path d="m22 2-7 20-4-9-9-4 20-7Z" />
+                </svg>
+              </button>
+              <span className="kbd-hint" aria-hidden="true">Entrée</span>
+            </span>
           </div>
         </div>
 

@@ -20,6 +20,10 @@ interface Props {
   onNewSession: () => void;
   hideHeader?: boolean;
   style?: React.CSSProperties;
+  /** Distingue « pas encore chargé » et « le chargement a échoué » du vrai vide.
+   *  Sans ça, les trois cas produisaient le même écran. */
+  state?: "loading" | "ready" | "error";
+  onRetry?: () => void;
 }
 
 const actionButtonStyle: React.CSSProperties = {
@@ -46,6 +50,8 @@ export default function Sidebar({
   onNewSession,
   hideHeader = false,
   style,
+  state = "ready",
+  onRetry,
 }: Props) {
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
@@ -82,7 +88,7 @@ export default function Sidebar({
   };
 
   return (
-    <div style={{
+    <div className="history-panel" style={{
       height: "100%",
       display: "flex",
       flexDirection: "column",
@@ -105,7 +111,7 @@ export default function Sidebar({
           <span>Historique</span>
           <button
             onClick={onNewSession}
-            title="Nouvelle session"
+            title="Nouvelle session" aria-label="Nouvelle session"
             style={{
               background: "none",
               border: "none",
@@ -177,7 +183,40 @@ export default function Sidebar({
         overflowY: "auto",
         padding: "4px 8px 12px",
       }}>
-        {sessions.length === 0 ? (
+        {state === "loading" && sessions.length === 0 ? (
+          // Squelettes plutôt qu'un vide trompeur pendant le chargement.
+          <div aria-busy="true" aria-label="Chargement des discussions"
+               style={{ display: "flex", flexDirection: "column", gap: "4px", padding: "4px 0" }}>
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="frontend-loading-block"
+                   style={{ height: "44px", borderRadius: "10px", opacity: 1 - i * 0.18 }} />
+            ))}
+          </div>
+        ) : state === "error" ? (
+          <div role="alert" style={{
+            display: "flex", flexDirection: "column", alignItems: "center", gap: "10px",
+            padding: "32px 14px", color: "var(--text-muted)", fontSize: "13px",
+            lineHeight: 1.6, textAlign: "center",
+          }}>
+            <span>Impossible de charger vos discussions.</span>
+            <span style={{ color: "var(--text-dim)", fontSize: "12px" }}>
+              Le serveur est peut-être injoignable.
+            </span>
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                style={{
+                  minHeight: "36px", padding: "0 14px", borderRadius: "9px",
+                  border: "1px solid var(--border-color)", color: "var(--text-main)",
+                  background: "var(--bubble-ai)", fontSize: "12px", fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Réessayer
+              </button>
+            )}
+          </div>
+        ) : sessions.length === 0 ? (
           <div style={{
             textAlign: "center",
             color: "var(--text-dim)",
@@ -197,9 +236,35 @@ export default function Sidebar({
               return (
                 <div
                   key={session.id}
+                  // La ligne n'était qu'un `div onClick` : sans `tabIndex` ni
+                  // gestion clavier, aucune session ne pouvait être ouverte sans
+                  // souris.
+                  role="button"
+                  tabIndex={0}
+                  aria-current={isActive ? "true" : undefined}
+                  aria-label={`Ouvrir la discussion « ${session.title} »`}
                   onMouseEnter={() => setHoveredSessionId(session.id)}
                   onMouseLeave={() => setHoveredSessionId(null)}
+                  // Les actions de la ligne n'apparaissaient qu'au survol, donc
+                  // jamais au clavier. `onFocus`/`onBlur` remontent en React
+                  // (focusin/focusout) : la ligne s'ouvre aussi quand l'un de ses
+                  // boutons prend le focus, et ne se referme que si le focus quitte
+                  // la ligne entière.
+                  onFocus={() => setHoveredSessionId(session.id)}
+                  onBlur={(e) => {
+                    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                      setHoveredSessionId(null);
+                    }
+                  }}
                   onClick={() => onSelectSession(session.id)}
+                  onKeyDown={(e) => {
+                    // Les boutons d'action enfants gèrent leurs propres touches.
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectSession(session.id);
+                    }
+                  }}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -293,7 +358,7 @@ export default function Sidebar({
                           e.stopPropagation();
                           commitEditing();
                         }}
-                        title="Valider"
+                        title="Valider" aria-label="Valider"
                         style={actionButtonStyle}
                         onMouseEnter={e => {
                           e.currentTarget.style.background = "rgba(52,168,83,0.15)";
@@ -311,7 +376,7 @@ export default function Sidebar({
                           e.stopPropagation();
                           cancelEditing();
                         }}
-                        title="Annuler"
+                        title="Annuler" aria-label="Annuler"
                         style={actionButtonStyle}
                         onMouseEnter={e => {
                           e.currentTarget.style.background = "rgba(234,67,53,0.15)";
@@ -332,7 +397,7 @@ export default function Sidebar({
                           e.stopPropagation();
                           startEditing(session);
                         }}
-                        title="Renommer la discussion"
+                        title="Renommer la discussion" aria-label="Renommer la discussion"
                         style={actionButtonStyle}
                         onMouseEnter={e => {
                           e.currentTarget.style.background = "var(--bubble-ai)";
@@ -350,7 +415,7 @@ export default function Sidebar({
                           e.stopPropagation();
                           onDeleteSession(session.id);
                         }}
-                        title="Supprimer la discussion"
+                        title="Supprimer la discussion" aria-label="Supprimer la discussion"
                         style={actionButtonStyle}
                         onMouseEnter={e => {
                           e.currentTarget.style.background = "rgba(234,67,53,0.15)";

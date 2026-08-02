@@ -414,7 +414,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
 
   return (
     <>
-      <div style={{
+      <div className="studio-panel" style={{
         height: "100%",
         display: "flex",
         flexDirection: "column",
