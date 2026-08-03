@@ -61,3 +61,12 @@ backend/.venv-timecopilot/
 # Claude Code : état local (verrou de tâche planifiée, permissions locales) —
 # spécifique à la machine, jamais partagé.
 .claude/
+
+# DONNÉES PERSONNELLES — ne doivent JAMAIS entrer dans ce dépôt, qui est public.
+# Sorties des essais d'OCR sur des documents réels (listes de réclamations) :
+# elles contiennent des noms, dates de naissance, sexes, notes et décisions
+# administratives concernant des personnes nommées. Les publier serait une
+# divulgation de données personnelles, irréversible une fois poussée.
+backend/ocr_result*.md
+backend/dataset_*.csv
+backend/dataset_*.json

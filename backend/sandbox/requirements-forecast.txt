@@ -4,5 +4,5 @@
 # d'un LLM et le téléchargement de poids depuis HuggingFace.
 #
 # Fichier séparé de requirements.txt à dessein : la couche Docker qui installe la
-# base (pandas, scikit-learn, mljar…) reste ainsi en cache lors des rebuilds.
+# base (pandas, scikit-learn…) reste ainsi en cache lors des rebuilds.
 statsforecast==2.0.2

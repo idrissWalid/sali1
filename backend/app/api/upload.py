@@ -57,13 +57,9 @@ Résumé final :
 
 @router.get("/llm-models")
 async def list_llm_models():
-    try:
-        import subprocess
-        result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
-        lines = result.stdout.strip().split('\n')[1:]
-        models = [line.split()[0] for line in lines if line]
-    except Exception:
-        models = []
+    from app.services.ollama_service import list_models
+
+    models = list_models()
 
     proprietary = []
     if get_api_key("gemini"):
@@ -71,6 +67,15 @@ async def list_llm_models():
     for provider, provider_models in PROVIDER_MODELS.items():
         if provider == "gemini":
             continue  # Déjà géré ci-dessus avec la convention de nom nu.
+        if provider == "custom":
+            # Pas de catalogue : le fournisseur « Autre » n'expose que le modèle
+            # saisi par l'utilisateur, et seulement s'il est complètement
+            # configuré (clé + URL, sinon l'appel échouerait à la première
+            # question).
+            modele = config.get_custom_model()
+            if modele and get_api_key("custom") and config.get_custom_base_url():
+                proprietary.append(f"custom/{modele}")
+            continue
         if get_api_key(provider):
             proprietary.extend(f"{provider}/{m}" for m in provider_models)
 
@@ -373,10 +378,12 @@ async def upload_file(
                             "technical": f"Empty document: {filename}",
                         }) + "\n"
                         return
-                    # Aucun texte extractible (scan/photo). On tente d'abord un OCR
-                    # local : s'il aboutit, le document redevient un document texte
-                    # ordinaire, exploitable par n'importe quel modèle (y compris un
-                    # LLM local), avec citations RAG et extraction de tableau.
+                    # Aucun texte extractible (scan/photo). On lance la cascade OCR :
+                    # serveur Unlimited-OCR, puis transcription par le modèle vision
+                    # de l'utilisateur, puis RapidOCR en local. Si l'un aboutit, le
+                    # document redevient un document texte ordinaire, exploitable par
+                    # n'importe quel modèle (y compris un LLM local), avec citations
+                    # RAG et extraction de tableau.
                     yield json.dumps({
                         "status": "processing",
                         "step": 3,
@@ -386,7 +393,9 @@ async def upload_file(
 
                     try:
                         from app.services.ocr_service import ocr_pdf_pages, extract_table_from_ocr
-                        ocr_pages = await asyncio.to_thread(ocr_pdf_pages, file_bytes)
+                        # `model` sert au 2e recours (transcription par le modèle
+                        # multimodal choisi) ; les deux autres moteurs l'ignorent.
+                        ocr_pages = await asyncio.to_thread(ocr_pdf_pages, file_bytes, model=model)
                         ocr_text = "\n\n".join(p["text"] for p in ocr_pages if p["text"].strip()).strip()
                     except Exception:
                         ocr_pages, ocr_text = [], ""
@@ -425,82 +434,44 @@ async def upload_file(
 
                         raw_context = " ".join(ocr_text.split()[:2400])
 
-                if not raw_context.strip():
-                    # OCR infructueux (photo illisible, écriture manuscrite...) :
-                    # dernier recours, retrieval visuel via ColSmolVLM + un modèle
-                    # multimodal. Seule branche qui exige la vision — les documents
-                    # texte et ceux récupérés par OCR restent lisibles par n'importe
-                    # quel modèle, y compris local.
-                    from app.services.colsmolvlm_service import index_visual_document, render_pdf_to_images
-                    from app.services.vision_service import (
-                        VisionNonSupportee, ask_vision, message_refus, supporte_vision,
+                # Les trois moteurs OCR ont échoué : ni serveur Unlimited-OCR, ni
+                # modèle multimodal, et RapidOCR n'a rien reconnu (manuscrit, photo
+                # floue...). On crée la session malgré tout — perdre l'import serait
+                # plus pénible que d'ouvrir une session qui dit franchement ce qui
+                # manque — mais sans contexte, le chat ne pourra rien en tirer.
+                document_illisible = not raw_context.strip()
+
+                if document_illisible:
+                    from app.services.vision_service import supporte_vision
+
+                    raison_vision = (
+                        "le modèle sélectionné n'est pas multimodal"
+                        if not supporte_vision(model)
+                        else "l'appel au modèle a échoué"
                     )
-                    from app.services.session_service import set_session_type as _set_session_type
-                    import io as _io
-
-                    if not supporte_vision(model):
-                        # Vérifié AVANT l'indexation ColSmolVLM : celle-ci est
-                        # coûteuse et n'aurait aucune utilité sans modèle capable
-                        # de lire les pages ensuite.
-                        yield json.dumps({
-                            "status": "error",
-                            "message": message_refus(model or "modèle par défaut"),
-                            "technical": f"Modèle sans capacité vision : {model}",
-                        }) + "\n"
-                        return
-
-                    visual_result = await asyncio.to_thread(index_visual_document, session_id, file_bytes)
-                    if visual_result.get("status") != "ok":
-                        yield json.dumps({
-                            "status": "error",
-                            "message": "Le document ne contient pas de texte lisible et l'indexation visuelle (ColSmolVLM) a échoué.",
-                            "technical": visual_result.get("message", "Erreur ColSmolVLM inconnue.")
-                        }) + "\n"
-                        return
-
-                    _set_session_type(session_id, "document_visual")
-
-                    preview_images = (await asyncio.to_thread(render_pdf_to_images, file_bytes))[:4]
-                    preview_png_bytes = []
-                    for img in preview_images:
-                        buf = _io.BytesIO()
-                        img.save(buf, "PNG")
-                        preview_png_bytes.append(buf.getvalue())
-
-                    summary_prompt = """
-                    Voici les premières pages d'un document scanné (image).
-
-                    Rédige un résumé structuré, naturel et fluide en français à partir de ce que tu vois sur ces images.
-                    Ne commence JAMAIS le résumé par une introduction ou des salutations (par exemple : "Bonjour", "En tant qu'expert...", "Voici le résumé..."). Rentre directement dans le vif du sujet.
-
-                    Organise ta réponse sous cette forme :
-
-                    ### 1. RÉSUMÉ
-                    [Rédige un paragraphe de 3 à 5 phrases résumant le contenu général et l'objectif du document]
-
-                    ### 2. THÈMES PRINCIPAUX
-                    [Présente les grands thèmes abordés sous forme de liste à puces naturelle]
-
-                    ### 3. POINTS CLÉS
-                    [Présente 3 à 5 informations importantes sous forme de liste à puces naturelle]
-
-                    ### 4. PROPOSITIONS
-                    [Propose 3 questions ou analyses pertinentes suggérées par ce document]
-                    """
-                    try:
-                        summary = await asyncio.to_thread(ask_vision, summary_prompt, preview_png_bytes, model=model)
-                    except VisionNonSupportee as exc:
-                        yield json.dumps({
-                            "status": "error",
-                            "message": str(exc),
-                            "technical": f"Modèle sans capacité vision : {model}",
-                        }) + "\n"
-                        return
+                    summary = (
+                        "### Document non lu\n\n"
+                        "Ce document est un scan dont **aucun moteur de reconnaissance "
+                        "de texte n'a rien pu extraire**. La session est créée, mais "
+                        "elle reste vide : les questions posées ici n'auront aucun "
+                        "contenu sur lequel s'appuyer.\n\n"
+                        "Les trois recours tentés :\n\n"
+                        f"1. **Unlimited-OCR** — serveur d'OCR injoignable "
+                        f"(voir `README ocr.md` pour le démarrer) ;\n"
+                        f"2. **Transcription par le modèle vision** — {raison_vision} "
+                        f"(modèle : `{model or 'par défaut'}`) ;\n"
+                        "3. **RapidOCR** — n'a rien reconnu, ce qui arrive sur un "
+                        "manuscrit ou un scan de mauvaise qualité.\n\n"
+                        "**Que faire :** choisir un modèle multimodal (Gemini, GPT-4o, "
+                        "Claude, ou un modèle vision local comme llava) puis réimporter ; "
+                        "ou fournir une version texte du document ; ou fournir un scan "
+                        "de meilleure qualité."
+                    )
                     add_to_history(session_id, "model", summary)
 
-                    # Document illisible en texte : le résumé issu de la vision est
-                    # la seule description exploitable pour titrer la session.
-                    titre = await asyncio.to_thread(titre_depuis_document, filename, summary, model=model)
+                    # Pas de contexte à résumer : le nom du fichier est la seule
+                    # description disponible pour titrer la session.
+                    titre = Path(filename).stem or filename
                     rename_session(session_id, titre)
 
                     yield json.dumps({
@@ -518,7 +489,8 @@ async def upload_file(
                             "title": titre,
                             "filename": filename,
                             "chunks_indexed": 0,
-                            "summary": summary
+                            "has_embedded_table": False,
+                            "summary": summary,
                         }
                     }) + "\n"
                     return

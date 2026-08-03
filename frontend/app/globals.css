@@ -587,7 +587,17 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .settings-save__loader, .settings-save__check { display: block; overflow: visible; height: 16px; flex: 0 0 auto; }
 
 /* Cadre commun des fenêtres : espacement, lisibilité et actions faciles à atteindre. */
-.modal-content { padding: 0 !important; border-radius: 24px !important; }
+/* Le fond passe par --surface-raised, le jeton de surface surélevée (comme
+   .kbd-hint) : sans lui le panneau n'avait aucun fond et laissait voir le voile
+   arrière et la page à travers. Les variables plutôt que des couleurs en dur,
+   pour que la bascule clair/sombre continue de suivre. */
+.modal-content {
+  padding: 0 !important;
+  border-radius: 24px !important;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-panel);
+}
 .modal-content__header { margin: 0 !important; padding: 26px 72px 20px 28px; border-bottom: 1px solid var(--border-muted); }
 .modal-content__body { padding: 24px 28px 28px; overscroll-behavior: contain; }
 .modal-content__close:hover { color: var(--text-main) !important; border-color: var(--border-color) !important; background: var(--accent-soft) !important; }

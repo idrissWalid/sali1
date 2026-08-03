@@ -42,6 +42,39 @@ Il comporte deux services FastAPI distincts :
    GEMINI_API_KEY=votre_cle_api_ici
    ```
 
+   Les autres fournisseurs (OpenAI, Anthropic, Mistral, Groq) se configurent
+   depuis l'interface — *Préférences → Modèle IA → Configurer l'API* — qui teste
+   la clé avant de l'écrire ici.
+
+### Fournisseur « Autre » (compatible OpenAI)
+
+La même boîte de dialogue propose une catégorie **Autre**, pour tout point
+d'entrée qui parle le protocole d'OpenAI : vLLM, LM Studio, OpenRouter,
+Together, un proxy interne… Trois champs à saisir — **URL**, **modèle**,
+**clé API** — au lieu d'un modèle choisi dans un catalogue.
+
+Trois variables sont alors écrites dans `.env` :
+
+```env
+CUSTOM_API_BASE_URL=https://api.exemple.com/v1
+CUSTOM_API_MODEL=nom-exact-du-modele
+CUSTOM_API_KEY=votre_cle
+```
+
+L'URL est la **racine** du point d'entrée : `/chat/completions` est ajouté par
+le code. Si vous collez l'URL complète, le slash final ou le suffixe sont
+retirés automatiquement (`normaliser_base_url`).
+
+Le modèle apparaît ensuite dans les listes sous la forme `custom/<modèle>`, et
+n'est proposé que si les trois réglages sont présents — sinon la première
+question échouerait. La clé est testée par une requête minimale avant d'être
+enregistrée, et rien n'est écrit si le test échoue.
+
+La lecture d'images fonctionne aussi via ce fournisseur, mais seulement si le
+nom du modèle contient un marqueur multimodal connu (`gpt-4o`, `claude-3`,
+`pixtral`, `qwen2.5-vl`…) : `supporte_vision` refuse en cas de doute plutôt que
+d'échouer au milieu d'un appel payant.
+
 ---
 
 ## Lancement des Serveurs

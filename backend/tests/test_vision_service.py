@@ -99,50 +99,27 @@ class TestRoutage:
             ask_vision("Q", [], model="gemini-3.1-flash-lite-preview")
 
 
-class TestBrancheChatDocumentVisual:
-    """Exécute réellement la branche `document_visual` du chat.
+class TestPromptSystemeSurchargeable:
+    """La transcription OCR (2e recours de `ocr_service`) doit pouvoir remplacer
+    le prompt système de l'agent.
 
-    Un simple import ne l'aurait pas couverte : la première version de ce code
-    référençait un `model` inexistant dans `_run_chat` (le reste de la fonction
-    utilise `request.model`), soit un NameError à chaque question sur un scan.
+    Sans ça, les pages sont lues par un « agent d'analyse de données » à qui l'on
+    impose de conclure par des suggestions d'analyses complémentaires : la
+    transcription reviendrait enrobée de commentaires, puis serait indexée telle
+    quelle.
     """
 
-    @staticmethod
-    def _preparer(monkeypatch, modele):
-        import app.api.chat as chat
-        import app.services.colsmolvlm_service as colsmol
+    def test_le_systeme_par_defaut_est_celui_de_lagent(self, monkeypatch):
+        vu = {}
+        monkeypatch.setattr(vision, "_vision_ollama",
+                            lambda p, i, m, system=None: vu.update(system=system) or "ok")
+        ask_vision("Q", _IMG, model="llava:13b")
+        assert "analyse de données" in vu["system"]
 
-        monkeypatch.setattr(chat, "get_session", lambda sid: {"id": sid})
-        monkeypatch.setattr(chat, "get_session_type", lambda sid: "document_visual")
-        monkeypatch.setattr(chat, "get_history", lambda sid: [])
-        monkeypatch.setattr(chat, "add_to_history", lambda *a, **k: None)
-        monkeypatch.setattr(chat, "save_message_to_report", lambda *a, **k: None, raising=False)
-        monkeypatch.setattr(colsmol, "retrieve_visual_pages",
-                            lambda sid, q: [{"page": 1, "image_bytes": b"png"}])
-        return chat.ChatRequest(session_id="s1", message="De quoi parle ce document ?",
-                                model=modele)
-
-    async def _collecter(self, chat, request):
-        return [ev async for ev in chat._run_chat(request)]
-
-    def test_modele_vision_lit_les_pages(self, monkeypatch):
-        import asyncio
-
-        import app.api.chat as chat
-        req = self._preparer(monkeypatch, "llava:13b")
-        monkeypatch.setattr(vision, "_vision_ollama", lambda *a, **k: "Le document traite de X.")
-
-        events = asyncio.run(self._collecter(chat, req))
-        final = [e for e in events if e.get("type") == "result"][-1]
-        assert "Le document traite de X." in final["response"]
-
-    def test_modele_sans_vision_explique_au_lieu_de_planter(self, monkeypatch):
-        import asyncio
-
-        import app.api.chat as chat
-        req = self._preparer(monkeypatch, "gemma2:latest")
-
-        events = asyncio.run(self._collecter(chat, req))
-        final = [e for e in events if e.get("type") == "result"][-1]
-        assert "gemma2:latest" in final["response"]
-        assert "multimodal" in final["response"]
+    def test_le_systeme_fourni_remplace_celui_de_lagent(self, monkeypatch):
+        vu = {}
+        monkeypatch.setattr(vision, "_vision_ollama",
+                            lambda p, i, m, system=None: vu.update(system=system) or "ok")
+        ask_vision("Q", _IMG, model="llava:13b", system="Tu transcris, rien d'autre.")
+        assert vu["system"] == "Tu transcris, rien d'autre."
+        assert "analyse de données" not in vu["system"]

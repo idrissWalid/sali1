@@ -11,6 +11,11 @@ PROVIDER_ENV_VARS = {
     "openai": "OPENAI_API_KEY",
     "groq": "GROQ_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
+    # Fournisseur « Autre » : n'importe quel point d'entrée compatible OpenAI
+    # (vLLM, LM Studio, OpenRouter, Together, un proxy interne…). Contrairement
+    # aux précédents, son URL et son modèle ne sont pas connus à l'avance :
+    # l'utilisateur les saisit, et ils sont persistés ci-dessous.
+    "custom": "CUSTOM_API_KEY",
 }
 
 # Modèles proposés par fournisseur dans la configuration API (voir /api/settings).
@@ -22,7 +27,59 @@ PROVIDER_MODELS = {
     "mistral": ["mistral-large-latest", "mistral-small-latest", "open-mistral-nemo"],
     "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"],
     "anthropic": ["claude-sonnet-4-5", "claude-3-5-haiku-latest"],
+    # Vide à dessein : le modèle du fournisseur « Autre » est saisi par
+    # l'utilisateur, pas choisi dans une liste. Il est lu via get_custom_model().
+    "custom": [],
 }
+
+# ── Fournisseur « Autre » ────────────────────────────────────────────────────
+# Deux réglages en plus de la clé, persistés dans .env comme le reste pour
+# survivre à un redémarrage sans base de données.
+CUSTOM_BASE_URL_ENV_VAR = "CUSTOM_API_BASE_URL"
+CUSTOM_MODEL_ENV_VAR = "CUSTOM_API_MODEL"
+
+
+def normaliser_base_url(url: str) -> str:
+    """URL de base exploitable par `openai_compatible.complete`.
+
+    Celui-ci concatène « /chat/completions » : une URL finissant par un slash
+    donnerait « //chat/completions », et coller l'URL complète trouvée dans la
+    documentation d'un fournisseur — l'erreur la plus probable — donnerait
+    « /chat/completions/chat/completions ». Les deux sont corrigés ici plutôt
+    que reprochés à l'utilisateur.
+    """
+    url = (url or "").strip().rstrip("/")
+    for suffixe in ("/chat/completions", "/completions"):
+        if url.endswith(suffixe):
+            url = url[: -len(suffixe)]
+            break
+    return url
+
+
+def get_custom_base_url() -> str | None:
+    return os.getenv(CUSTOM_BASE_URL_ENV_VAR) or None
+
+
+def set_custom_base_url(value: str) -> None:
+    value = normaliser_base_url(value)
+    if not value:
+        raise ValueError("URL de base vide.")
+    ENV_PATH.touch(exist_ok=True)
+    _dotenv_set_key(str(ENV_PATH), CUSTOM_BASE_URL_ENV_VAR, value)
+    os.environ[CUSTOM_BASE_URL_ENV_VAR] = value
+
+
+def get_custom_model() -> str | None:
+    return os.getenv(CUSTOM_MODEL_ENV_VAR) or None
+
+
+def set_custom_model(value: str) -> None:
+    value = (value or "").strip()
+    if not value:
+        raise ValueError("Nom de modèle vide.")
+    ENV_PATH.touch(exist_ok=True)
+    _dotenv_set_key(str(ENV_PATH), CUSTOM_MODEL_ENV_VAR, value)
+    os.environ[CUSTOM_MODEL_ENV_VAR] = value
 
 # Conservé pour compatibilité avec le code existant qui importe cette constante.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")

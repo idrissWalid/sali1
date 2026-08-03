@@ -1,9 +1,8 @@
 """TimeCopilot vit dans un venv dédié, appelé en sous-processus.
 
-Ses contraintes n'ont aucune version commune avec deux paquets du backend
-(`transformers<5` vs colpali-engine `>=5.3`, `openai>=1.99` vs pandasai `<0.28`) :
-l'installer dans le venv principal casse l'indexation visuelle des scans. Ces
-tests verrouillent la frontière entre les deux environnements.
+Ses contraintes n'ont aucune version commune avec `pandasai` (`openai>=1.99` vs
+`openai<0.28`) : l'installer dans le venv principal casse les statistiques
+descriptives. Ces tests verrouillent la frontière entre les deux environnements.
 """
 
 import sys

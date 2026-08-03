@@ -362,29 +362,11 @@ async def _run_chat(request: ChatRequest):
     response = ""
 
     # ── Chemin B : documents ───────────────────────────────────
-    if session_type == "document_visual":
-        from app.services.colsmolvlm_service import retrieve_visual_pages
-        from app.services.vision_service import VisionNonSupportee, ask_vision
-
-        yield _step("searching", "Recherche des pages pertinentes du document…")
-        pages = await to_thread(retrieve_visual_pages, request.session_id, request.message)
-        sources = [{"page": p["page"], "text": ""} for p in pages]
-        prompt = f"""
-Question : {request.message}
-Réponds uniquement à partir des pages du document ci-jointes.
-"""
-        yield _step("reading", "Lecture des pages retrouvées…")
-        try:
-            # Route vers le modèle multimodal du fournisseur choisi. Si celui-ci
-            # n'a pas de vision, on le dit — sans rerouter vers un autre
-            # fournisseur, ce qui enverrait le document ailleurs que prévu.
-            response = await to_thread(ask_vision, prompt, [p["image_bytes"] for p in pages],
-                                        model=request.model, history=history)
-        except VisionNonSupportee as exc:
-            yield {"type": "result", "response": str(exc), "images": [], "sources": sources}
-            return
-
-    elif session_type == "document":
+    # Il n'existe plus de session « visuelle » : un scan est transcrit en texte
+    # dès l'upload (cascade OCR, voir ocr_service), donc tout document arrive ici
+    # sous forme de texte indexé — lisible par n'importe quel modèle, y compris
+    # un Ollama local.
+    if session_type == "document":
         embedded_bytes, embedded_filename, _, _ = get_embedded_table(request.session_id)
 
         # Un tableau est attaché à ce document (rapport PDF...) : si la question

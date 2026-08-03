@@ -32,22 +32,38 @@ httpx
 ydata-profiling==4.15.1
 docker
 pandasai
-# ATTENTION : `timecopilot` ne doit PAS figurer ici. Ses contraintes sont
-# incompatibles avec deux dépendances de ce venv, sans version commune possible :
-#   - timecopilot exige transformers<5, colpali-engine exige transformers>=5.3
-#   - timecopilot exige openai>=1.99.7, pandasai 0.4.0 exige openai<0.28
-# L'installer ici rétrograde transformers et casse l'indexation visuelle
-# (ColSmolVLM). Il vit dans un venv dédié : voir requirements-timecopilot.txt.
+# ATTENTION : `timecopilot` ne doit PAS figurer ici. Il exige openai>=1.99.7 là
+# où pandasai 0.4.0 exige openai<0.28 — aucune version commune n'existe, et
+# l'installer ici casse les statistiques descriptives. Il vit dans un venv
+# dédié : voir requirements-timecopilot.txt.
 tf-keras
 openai-whisper
 soundfile
 torch<2.12.0
 certifi
-colpali-engine
 pymupdf
-# OCR local des PDF scannés (moteur ONNX, aucune dépendance système).
+# OCR des PDF scannés — cascade de trois moteurs (app/services/ocr_service.py) :
+#   1. Unlimited-OCR — serveur externe (vLLM/SGLang) joint en HTTP : rien à
+#      installer ici, mais il exige un GPU CUDA. Voir « README ocr.md ».
+#   2. Transcription par le modèle vision déjà choisi par l'utilisateur : rien à
+#      installer non plus, l'appel passe par vision_service.
+#   3. RapidOCR — le seul moteur qui s'installe, et le seul qui fonctionne sans
+#      GPU, sans réseau et sans clé d'API. D'où sa place de filet de sécurité.
 # onnxruntime et opencv sont épinglés : leurs versions récentes exigent
 # numpy 2.x, incompatible avec le reste du stack.
+#
+# opencv en variante HEADLESS : l'image du backend est `python:3.11-slim`, qui
+# n'embarque aucune bibliothèque graphique. `opencv-python` complet y échoue sur
+# « libGL.so.1: cannot open shared object file » et emporte RapidOCR avec lui.
+# Le backend n'affiche jamais de fenêtre, la GUI d'OpenCV ne lui sert à rien.
+#
+# ATTENTION, cela ne règle PAS le cas de Windows « N » : headless retire la GUI
+# mais PAS le backend vidéo, et `cv2.pyd` importe toujours MF.dll, MFPlat.dll et
+# MFReadWrite.dll (vérifié dans sa table d'imports). Ces DLL sont absentes des
+# éditions N, où `import cv2` échoue sur « DLL load failed » — RapidOCR est alors
+# indisponible tant que le Media Feature Pack n'est pas installé :
+#   DISM /Online /Add-Capability /CapabilityName:Media.MediaFeaturePack~~~~0.0.1.0
+# Les deux autres moteurs OCR n'en dépendent pas.
 rapidocr-onnxruntime
 onnxruntime==1.19.2
-opencv-python==4.10.0.84
+opencv-python-headless==4.10.0.84

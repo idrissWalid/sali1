@@ -2,8 +2,8 @@
 
 Ce fichier n'est jamais importé par le backend : il est lancé en sous-processus
 par `.venv-timecopilot/bin/python`, parce que les dépendances de TimeCopilot sont
-incompatibles avec celles du backend (transformers<5 vs colpali-engine>=5.3,
-openai>=1.99 vs pandasai<0.28 — aucune version commune n'existe).
+incompatibles avec celles du backend (openai>=1.99 vs pandasai<0.28 — aucune
+version commune n'existe).
 
 Protocole, calqué sur `sandbox/runner.py` pour rester familier :
   - entrée  : un JSON sur stdin

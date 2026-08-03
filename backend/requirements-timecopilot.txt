@@ -2,11 +2,14 @@
 # principal (backend/requirements.txt).
 #
 # Pourquoi un venv séparé : les contraintes de timecopilot sont incompatibles
-# avec deux paquets du backend, sans version commune possible :
-#   - timecopilot   exige transformers<5   ↔ colpali-engine exige transformers>=5.3
+# avec pandasai, sans version commune possible :
 #   - timecopilot   exige openai>=1.99.7   ↔ pandasai 0.4.0 exige openai<0.28
-# Installer timecopilot dans le venv principal rétrograde transformers en 4.x et
-# casse l'indexation visuelle des documents scannés (ColSmolVLM).
+# Installer timecopilot dans le venv principal casse les statistiques
+# descriptives, qui passent par pandasai.
+#
+# (Un second conflit existait avec colpali-engine sur transformers ; il a disparu
+# avec le retrait de l'indexation visuelle ColSmolVLM — les scans sont désormais
+# transcrits en texte, voir app/services/ocr_service.py.)
 #
 # Installation (Python 3.11 — 3.12 n'a pas ensurepip sur cette machine) :
 #   cd backend

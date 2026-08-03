@@ -74,6 +74,8 @@ def complete_text(prompt: str, model: str, history: list | None = None,
             from app.services.groq_service import complete as provider_complete
         elif provider == "anthropic":
             from app.services.anthropic_service import complete as provider_complete
+        elif provider == "custom":
+            from app.services.custom_provider_service import complete as provider_complete
         else:
             provider_complete = None
         if provider_complete is not None:
@@ -180,7 +182,8 @@ def ask_gemini(prompt: str, history: list = [], data_context: str = "", model: s
 def ask_gemini_vision(prompt: str, images: list, history: list = [], model: str | None = None,
                       system: str | None = None) -> str:
     """Répond à une question en s'appuyant directement sur des images (ex: pages de
-    document scanné retrouvées par ColSmolVLM) — pas de texte OCR intermédiaire.
+    document scanné) — utilisé notamment par la transcription OCR, 2e recours de
+    la cascade de `ocr_service`.
 
     Ne pas appeler directement : passer par `vision_service.ask_vision`, qui route
     vers le fournisseur choisi par l'utilisateur ET fournit `system`. Cette fonction

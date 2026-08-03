@@ -389,7 +389,7 @@ def get_embedded_table_context(session_id: str, model: str | None = None) -> str
     Construit dans le budget de contexte du modèle choisi (voir `prompt_budget`) :
     ici le tableau PARTAGE la place avec les extraits du document retrouvés par le
     RAG, la marge est donc plus étroite qu'en session tabulaire."""
-    from app.services.prompt_budget import bloc_apercu, profil_modele, stats_essentielles
+    from app.services.prompt_budget import bloc_apercu, bloc_roles, profil_modele, stats_essentielles
 
     _, filename, profile, stats = get_embedded_table(session_id)
     if not profile:
@@ -403,7 +403,7 @@ def get_embedded_table_context(session_id: str, model: str | None = None) -> str
 TABLEAU DE DONNÉES DÉTECTÉ DANS CE DOCUMENT ({filename}) :
 Lignes : {profile['rows']} | Colonnes : {profile['columns']}
 Colonnes disponibles : {', '.join(profile['column_names'])}
-
+{bloc_roles(variables)}
 STATISTIQUES PAR VARIABLE :
 {json.dumps(variables, ensure_ascii=False, indent=2)}
 
@@ -421,7 +421,7 @@ def get_data_context(session_id: str, model: str | None = None) -> str:
     choisi (voir `prompt_budget`) plutôt qu'un dump intégral raccourci en aval par
     une coupe aveugle au milieu du JSON.
     """
-    from app.services.prompt_budget import bloc_apercu, profil_modele, stats_essentielles
+    from app.services.prompt_budget import bloc_apercu, bloc_roles, profil_modele, stats_essentielles
 
     session = get_session(session_id)
     if not session or not session.get("data_profile"):
@@ -444,7 +444,7 @@ Doublons : {overview.get('n_doublons', profile.get('duplicates', 0))}
 Variables numériques : {overview.get('n_variables_numeriques', 0)}
 Variables catégorielles : {overview.get('n_variables_categorielles', 0)}
 Valeurs manquantes totales : {overview.get('n_valeurs_manquantes_total', 0)}
-
+{bloc_roles(variables)}
 STATISTIQUES PAR VARIABLE :
 {json.dumps(variables, ensure_ascii=False, indent=2)}
 

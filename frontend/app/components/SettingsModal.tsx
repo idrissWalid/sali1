@@ -54,6 +54,12 @@ export default function SettingsModal({
   const [apiSaving, setApiSaving] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({});
+  // Fournisseur « Autre » : l'URL est saisie par l'utilisateur au lieu d'être
+  // connue du code. `customBaseUrl` retient celle déjà enregistrée côté serveur
+  // pour préremplir le champ.
+  const [apiBaseUrl, setApiBaseUrl] = useState("");
+  const [customBaseUrl, setCustomBaseUrl] = useState("");
+  const isCustomProvider = apiProvider === "custom";
 
   useEffect(() => {
     if (!isOpen) return;
@@ -75,10 +81,16 @@ export default function SettingsModal({
       .then((res) => res.json())
       .then((data) => {
         const map: Record<string, string[]> = {};
+        let baseUrl = "";
         for (const p of data.providers || []) {
           map[p.id] = p.models || [];
+          if (p.id === "custom") baseUrl = p.base_url || "";
         }
         setProviderModels(map);
+        setCustomBaseUrl(baseUrl);
+        // Réouverture du dialogue sur « Autre » déjà configuré : on remet
+        // l'URL enregistrée plutôt que de laisser l'utilisateur la ressaisir.
+        setApiBaseUrl((actuelle) => actuelle || baseUrl);
       })
       .catch((err) => console.error("Erreur lors du chargement des fournisseurs:", err));
   }, [isApiDialogOpen]);
@@ -88,7 +100,19 @@ export default function SettingsModal({
   // via un effet, l'interface affichait un instant le modèle de l'ancien
   // fournisseur avant de se corriger, au prix d'un rendu supplémentaire.
   const modelesDuFournisseur = providerModels[apiProvider] || [];
-  if (modelesDuFournisseur.length > 0 && !modelesDuFournisseur.includes(apiModelName)) {
+  const [fournisseurPrecedent, setFournisseurPrecedent] = useState(apiProvider);
+
+  if (fournisseurPrecedent !== apiProvider) {
+    // Changement de fournisseur : le modèle du précédent n'a plus de sens.
+    // Indispensable pour « Autre », dont le champ est libre : sans remise à
+    // zéro, on y verrait le modèle de Gemini prérempli.
+    setFournisseurPrecedent(apiProvider);
+    setApiModelName(modelesDuFournisseur[0] || "");
+    if (apiProvider === "custom") setApiBaseUrl(customBaseUrl);
+  } else if (!isCustomProvider && modelesDuFournisseur.length > 0
+             && !modelesDuFournisseur.includes(apiModelName)) {
+    // Catalogue arrivé après la sélection : on aligne. Exclu pour « Autre »,
+    // dont le modèle est saisi librement et ne doit pas être écrasé.
     setApiModelName(modelesDuFournisseur[0]);
   }
 
@@ -304,7 +328,13 @@ export default function SettingsModal({
             const res = await fetch(`${apiUrl}/api/settings/api-key`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ provider: apiProvider, model: apiModelName, api_key: apiKey }),
+              body: JSON.stringify({
+                provider: apiProvider,
+                model: apiModelName,
+                api_key: apiKey,
+                // Ignoré par le backend pour les fournisseurs à URL fixe.
+                ...(isCustomProvider ? { base_url: apiBaseUrl } : {}),
+              }),
             });
             if (!res.ok) {
               const data = await res.json().catch(() => null);
@@ -322,6 +352,7 @@ export default function SettingsModal({
               onModelsRefetch();
             }
 
+            if (isCustomProvider) setCustomBaseUrl(apiBaseUrl);
             setApiKey("");
             setIsApiDialogOpen(false);
             setShowToast(true);
@@ -357,29 +388,72 @@ export default function SettingsModal({
                 <option value="anthropic">Claude (Anthropic)</option>
                 <option value="openai">OpenAI</option>
                 <option value="groq">Groq</option>
+                <option value="custom">Autre (compatible OpenAI)</option>
               </select>
             </div>
+
+            {isCustomProvider && (
+              <div className="grid gap-3">
+                <Label htmlFor="api-base-url">{"URL de l'API"}</Label>
+                <Input
+                  id="api-base-url"
+                  type="url"
+                  value={apiBaseUrl}
+                  onChange={(e) => setApiBaseUrl(e.target.value)}
+                  placeholder="https://api.exemple.com/v1"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby="api-base-url-help"
+                  style={{ background: "var(--bg-app)", color: "var(--text-main)", borderColor: "var(--border-color)" }}
+                  required
+                />
+                <small id="api-base-url-help" className="text-[11px] text-[var(--text-muted)]">
+                  {"Racine du point d'entrée, sans « /chat/completions » — il est ajouté automatiquement. Fonctionne avec vLLM, LM Studio, OpenRouter, Together ou tout proxy compatible OpenAI."}
+                </small>
+              </div>
+            )}
+
             <div className="grid gap-3">
               <Label htmlFor="api-model">Modèle</Label>
-              <select
-                id="api-model"
-                value={apiModelName}
-                onChange={(e) => setApiModelName(e.target.value)}
-                required
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: "6px",
-                  border: "1px solid var(--border-color)",
-                  background: "var(--bg-app)",
-                  color: "var(--text-main)",
-                  outline: "none",
-                  fontSize: "13px",
-                }}
-              >
-                {(providerModels[apiProvider] || []).map((m) => (
-                  <option key={m} value={m}>{m}</option>
-                ))}
-              </select>
+              {isCustomProvider ? (
+                <Input
+                  id="api-model"
+                  type="text"
+                  value={apiModelName}
+                  onChange={(e) => setApiModelName(e.target.value)}
+                  placeholder="nom-exact-du-modele"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-describedby="api-model-help"
+                  style={{ background: "var(--bg-app)", color: "var(--text-main)", borderColor: "var(--border-color)" }}
+                  required
+                />
+              ) : (
+                <select
+                  id="api-model"
+                  value={apiModelName}
+                  onChange={(e) => setApiModelName(e.target.value)}
+                  required
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: "6px",
+                    border: "1px solid var(--border-color)",
+                    background: "var(--bg-app)",
+                    color: "var(--text-main)",
+                    outline: "none",
+                    fontSize: "13px",
+                  }}
+                >
+                  {(providerModels[apiProvider] || []).map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              )}
+              {isCustomProvider && (
+                <small id="api-model-help" className="text-[11px] text-[var(--text-muted)]">
+                  {"Le nom tel que le serveur l'attend, à la casse près (ex. « meta-llama/Llama-3.3-70B-Instruct »)."}
+                </small>
+              )}
             </div>
             <div className="grid gap-3">
               <Label htmlFor="api-key">Clé API</Label>
@@ -409,7 +483,7 @@ export default function SettingsModal({
             <Button variant="outline" type="button" onClick={() => setIsApiDialogOpen(false)} style={{ color: "var(--text-main)", borderColor: "var(--border-color)" }}>
               Annuler
             </Button>
-            <Button type="submit" disabled={apiSaving || !apiModelName} style={{ background: "var(--accent-color)", color: "var(--bg-app)" }}>
+            <Button type="submit" disabled={apiSaving || !apiModelName.trim() || (isCustomProvider && !apiBaseUrl.trim())} style={{ background: "var(--accent-color)", color: "var(--bg-app)" }}>
               {apiSaving ? "Vérification de la clé..." : "Enregistrer"}
             </Button>
           </div>

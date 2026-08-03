@@ -5,9 +5,8 @@ RUN groupadd -r sandbox && useradd -r -g sandbox sandbox
 
 WORKDIR /app
 
-# Installer les dépendances système nécessaires pour la compilation (XGBoost, LightGBM, etc.)
+# Installer libgomp1 pour OpenMP (scikit-learn / OpenBLAS)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
