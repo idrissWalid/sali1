@@ -16,6 +16,11 @@ services:
     environment:
       # Optional: any backend specific overrides
       - PYTHONUNBUFFERED=1
+      # Serveur Unlimited-OCR (service `ocr` ci-dessous, profil "ocr"), 1er des
+      # trois recours OCR. Sans lui, un PDF scanné se replie sur la transcription
+      # par le modèle vision, puis sur RapidOCR en local — voir
+      # backend/app/services/ocr_service.py et « README ocr.md ».
+      - OCR_API_URL=${OCR_API_URL:-http://ocr:10000/v1/chat/completions}
     depends_on:
       - sandbox-builder
     deploy:
@@ -57,3 +62,41 @@ services:
       dockerfile: Dockerfile
     image: no-code-sandbox:latest
     command: ["echo", "Sandbox image built"]
+
+  # OCR des PDF scannés (Unlimited-OCR servi par vLLM) — 1er des trois recours.
+  #
+  # Sous un profil, donc PAS démarré par un `docker-compose up` ordinaire : ce
+  # service réclame un GPU NVIDIA et une image de plusieurs Go, là où tout le
+  # reste de la pile tourne sans. Pour l'activer :
+  #     docker compose --profile ocr up
+  # Sans lui, l'application fonctionne — un PDF scanné se replie sur la
+  # transcription par le modèle vision de l'utilisateur, puis sur RapidOCR en
+  # local, qui lui ne demande ni GPU, ni réseau, ni clé d'API.
+  #
+  # Hopper (CUDA 12.9) : remplacer le tag par `unlimited-ocr-cu129`. La recette
+  # officielle (https://recipes.vllm.ai/baidu/Unlimited-OCR) fait foi pour les
+  # options de service.
+  ocr:
+    profiles: ["ocr"]
+    image: vllm/vllm-openai:unlimited-ocr
+    command:
+      - --model=baidu/Unlimited-OCR
+      - --served-model-name=Unlimited-OCR
+      - --max-model-len=32768
+      - --port=10000
+    ports:
+      - "10000:10000"
+    volumes:
+      # Cache des poids : sans lui, le modèle est retéléchargé à chaque
+      # recréation du conteneur.
+      - huggingface-cache:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  huggingface-cache:

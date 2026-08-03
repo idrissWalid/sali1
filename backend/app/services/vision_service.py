@@ -72,8 +72,14 @@ def message_refus(model: str) -> str:
 
 
 def ask_vision(prompt: str, images: list[bytes], model: str | None = None,
-               history: list | None = None) -> str:
+               history: list | None = None, system: str | None = None) -> str:
     """Interroge le modèle multimodal du fournisseur choisi sur des images PNG.
+
+    `system` remplace le prompt système de l'agent pour cet appel. Sans lui, les
+    images sont lues par un « agent d'analyse de données » à qui l'on impose de
+    conclure par des suggestions d'analyses complémentaires — ce qu'il faut pour
+    répondre à une question, mais pas pour TRANSCRIRE une page : la transcription
+    se retrouverait alors enrobée de commentaires. Voir `ocr_service`.
 
     Raises:
         VisionNonSupportee: si `model` n'est pas multimodal. L'appelant doit
@@ -101,8 +107,9 @@ def ask_vision(prompt: str, images: list[bytes], model: str | None = None,
     # dédié. Auparavant seul le bras Gemini le posait (il le concaténait lui-même) :
     # lire le même scan avec Claude, GPT-4o ou un modèle vision local donnait donc
     # une réponse sans les règles de langue et de style de l'application.
-    from app.services.gemini_service import build_system_prompt
-    system = build_system_prompt()
+    if system is None:
+        from app.services.gemini_service import build_system_prompt
+        system = build_system_prompt()
 
     if provider == "gemini":
         from app.services.gemini_service import ask_gemini_vision
@@ -111,7 +118,7 @@ def ask_vision(prompt: str, images: list[bytes], model: str | None = None,
         return _vision_anthropic(prompt, images, nom_modele, history, system=system)
     if provider == "ollama":
         return _vision_ollama(prompt, images, nom_modele, system=system)
-    if provider in ("openai", "groq", "mistral"):
+    if provider in ("openai", "groq", "mistral", "custom"):
         return _vision_openai_compatible(prompt, images, nom_modele, history, provider, system=system)
 
     raise VisionNonSupportee(
@@ -135,6 +142,13 @@ def _vision_openai_compatible(prompt: str, images: list[bytes], model: str,
         "groq": "https://api.groq.com/openai/v1",
         "mistral": "https://api.mistral.ai/v1",
     }
+    # Le fournisseur « Autre » est le seul dont l'URL vient des réglages.
+    base = bases.get(provider) or config.get_custom_base_url()
+    if not base:
+        raise ValueError(
+            "Aucune URL enregistrée pour le fournisseur « Autre ». "
+            "Renseignez-la dans Préférences → Modèle IA → Configurer l'API."
+        )
     api_key = config.get_api_key(provider)
     if not api_key:
         raise ValueError(f"Clé API {provider} manquante. Configurez-la dans les paramètres.")
@@ -155,7 +169,7 @@ def _vision_openai_compatible(prompt: str, images: list[bytes], model: str,
     messages.append({"role": "user", "content": contenu})
 
     response = requests.post(
-        f"{bases[provider]}/chat/completions",
+        f"{base}/chat/completions",
         json={"model": model, "messages": messages, "temperature": 0.3, "max_tokens": 2048},
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         timeout=120,

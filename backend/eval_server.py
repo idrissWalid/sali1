@@ -567,22 +567,17 @@ async def save_pdf(request: Request):
         f.write(pdf_bytes)
     return {"status": "ok", "filename": filename}
 
-import subprocess
 @app.get("/models")
 def get_models():
-    try:
-        result = subprocess.run(["ollama", "list"], capture_output=True, text=True, check=True)
-        lines = result.stdout.strip().split('\n')[1:] # Skip header
-        models = [line.split()[0] for line in lines if line]
-        return {
-            "models": models,
-            "proprietary": ["gemini-3.1-flash-lite-preview"]
-        }
-    except Exception as e:
-        return {
-            "models": [],
-            "proprietary": ["gemini-3.1-flash-lite-preview"]
-        }
+    # Via l'API HTTP d'Ollama et non la CLI : le binaire `ollama` n'est pas
+    # forcément sur le PATH du processus, alors que le serveur est déjà joint en
+    # HTTP pour les générations. Voir ollama_service.list_models.
+    from app.services.ollama_service import list_models
+
+    return {
+        "models": list_models(),
+        "proprietary": ["gemini-3.1-flash-lite-preview"],
+    }
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  UI HTML (intégrée dans le même fichier)

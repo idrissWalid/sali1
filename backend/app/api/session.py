@@ -113,11 +113,5 @@ async def delete_session(session_id: str):
             chroma_client.delete_collection(name=f"session_{session_id}")
         except Exception as e:
             print(f"Erreur de suppression de la collection ChromaDB session_{session_id}: {e}")
-    elif result["type"] == "document_visual":
-        from app.services.colsmolvlm_service import delete_visual_session
-        try:
-            delete_visual_session(session_id)
-        except Exception as e:
-            print(f"Erreur de suppression des données visuelles de la session {session_id}: {e}")
 
     return {"status": "ok", "message": "Session supprimée avec succès."}

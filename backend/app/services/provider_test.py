@@ -3,9 +3,19 @@ via une requête minimale (peu de tokens), sans jamais persister la clé testée
 """
 
 
-def verify_provider_key(provider: str, model: str, api_key: str) -> None:
-    """Lève une exception explicite si la clé/modèle est invalide."""
-    if provider == "gemini":
+def verify_provider_key(provider: str, model: str, api_key: str,
+                        base_url: str | None = None) -> None:
+    """Lève une exception explicite si la clé/modèle est invalide.
+
+    `base_url` n'est utilisé que par le fournisseur « Autre », seul cas où le
+    point d'entrée n'est pas connu du code.
+    """
+    if provider == "custom":
+        from app.services.openai_compatible import complete
+        if not base_url:
+            raise ValueError("URL de base manquante pour le fournisseur « Autre ».")
+        complete(base_url, api_key, model, "Test", max_tokens=5, label="Autre")
+    elif provider == "gemini":
         _verify_gemini(model, api_key)
     elif provider == "anthropic":
         from app.services.anthropic_service import complete

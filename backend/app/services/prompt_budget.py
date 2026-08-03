@@ -43,10 +43,50 @@ _MARQUE_COUPE = "… [valeur écourtée]"
 # les verser toutes dans le contexte coûte des tokens à chaque tour sans rien
 # ajouter à ce que le modèle peut en dire.
 _STATS_UTILES = (
-    "type", "moyenne", "mediane", "ecart_type", "min", "max", "q1", "q3",
+    "type", "role", "moyenne", "mediane", "ecart_type", "min", "max", "q1", "q3",
     "skewness", "kurtosis", "n_manquantes", "n_zeros", "n_valeurs_distinctes",
     "valeur_dominante", "frequence_dominante",
 )
+
+# Rôles non analysables et la façon de les dire au modèle. Voir
+# `profiling_service.detecter_role`.
+_LIBELLE_ROLE = {
+    "identifiant_ligne": "numéro d'ordre des lignes",
+    "nominatif": "identité de personne",
+    "identifiant": "identifiant",
+}
+
+
+def bloc_roles(variables: dict | None) -> str:
+    """Dit explicitement quelles colonnes ne sont pas des variables d'analyse.
+
+    Sans cette section, le modèle reçoit un numéro d'ordre au même titre qu'une
+    note : il en commente la « moyenne », y cherche une tendance, et propose
+    d'analyser la répartition des patronymes. Les statistiques inutiles ont beau
+    être retirées en amont (`profiling_service`), il faut encore lui dire
+    POURQUOI ces colonnes sont là.
+    """
+    par_role: dict[str, list[str]] = {}
+    for nom, infos in (variables or {}).items():
+        libelle = _LIBELLE_ROLE.get((infos or {}).get("role"))
+        if libelle:
+            par_role.setdefault(libelle, []).append(nom)
+
+    if not par_role:
+        return ""
+
+    lignes = "\n".join(
+        f"- {', '.join(noms)} : {libelle}."
+        for libelle, noms in par_role.items()
+    )
+    return (
+        "\nCOLONNES QUI NE SONT PAS DES VARIABLES D'ANALYSE :\n"
+        f"{lignes}\n"
+        "N'en calcule ni moyenne, ni distribution, ni corrélation, et ne les "
+        "propose jamais comme axe d'analyse. Elles servent à DÉSIGNER une ligne, "
+        "pas à la caractériser. Utilise-les uniquement pour citer ou retrouver "
+        "un enregistrement précis.\n"
+    )
 
 
 @dataclass(frozen=True)

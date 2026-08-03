@@ -6,9 +6,9 @@ TimeCopilot est un *agent* de prévision : il calcule des caractéristiques de s
 la baseline SeasonalNaive par cross-validation, puis explique ses décisions et
 répond à la question posée en langage naturel.
 
-Il ne peut pas vivre dans le venv du backend : ses contraintes sont incompatibles
-avec `colpali-engine` (transformers) et `pandasai` (openai), sans version commune.
-On l'exécute donc dans `.venv-timecopilot` via un sous-processus.
+Il ne peut pas vivre dans le venv du backend : il exige `openai>=1.99.7` quand
+`pandasai` 0.4.0 exige `openai<0.28`, sans version commune. On l'exécute donc
+dans `.venv-timecopilot` via un sous-processus.
 
 L'agent a besoin du réseau (API du LLM, poids HuggingFace) : il tourne sur l'hôte,
 pas dans le sandbox Docker — ce qui est cohérent, le sandbox existant pour confiner

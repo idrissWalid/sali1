@@ -26,6 +26,39 @@ FALLBACK_MODELS = tuple(
 )
 
 
+def _base_url() -> str:
+    """Racine du serveur Ollama, déduite d'OLLAMA_API_URL.
+
+    Une seule variable à configurer pour tout le service, y compris quand le
+    serveur tourne ailleurs (autre machine, conteneur).
+    """
+    return OLLAMA_API_URL.split("/api/", 1)[0].rstrip("/")
+
+
+def list_models() -> list[str]:
+    """Modèles disponibles sur le serveur Ollama, liste vide s'il est injoignable.
+
+    Interrogé en HTTP, et non via la CLI `ollama list` comme auparavant : le
+    binaire n'est pas forcément sur le PATH du processus qui sert l'API — il est
+    même totalement absent du conteneur backend — alors que le serveur, lui, est
+    déjà joint en HTTP pour toutes les générations. Des modèles parfaitement
+    utilisables restaient donc invisibles, et l'échec était avalé par un `except`
+    muet qui les faisait passer pour absents.
+    """
+    url = f"{_base_url()}/api/tags"
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        entrees = response.json().get("models") or []
+    except Exception as error:
+        logger.info("Ollama injoignable sur %s : aucun modèle local listé (%s)", url, error)
+        return []
+
+    noms = {str(entree.get("name") or entree.get("model") or "").strip()
+            for entree in entrees if isinstance(entree, dict)}
+    return sorted(nom for nom in noms if nom)
+
+
 def _trim_prompt(prompt: str, limit: int = MAX_PROMPT_CHARS) -> str:
     """Conserve les consignes et la question, sans saturer le contexte Ollama."""
     prompt = (prompt or "").strip()

@@ -104,7 +104,14 @@ export default function DashboardPage() {
         // Les variables changent d'un dataset à l'autre : on ne conserve la
         // sélection courante que si elle existe encore.
         const vars = Object.keys(json.distributions || {});
-        setSelectedVar((current) => (current && vars.includes(current) ? current : vars[0] ?? ""));
+        // Un numéro d'ordre est souvent la première colonne du fichier : ouvrir
+        // dessus donnait un histogramme plat et sans intérêt en guise de
+        // première impression. On ouvre sur une vraie variable d'analyse.
+        const analysables = vars.filter(
+          (name) => (json.variables?.[name]?.role ?? "analysable") === "analysable"
+        );
+        const parDefaut = analysables[0] ?? vars[0] ?? "";
+        setSelectedVar((current) => (current && vars.includes(current) ? current : parDefaut));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Erreur de récupération");
       } finally {
@@ -219,6 +226,43 @@ export default function DashboardPage() {
 
   const datasets = data.datasets ?? [];
   const filteredVariables = Object.keys(variables).filter((name) => name.toLocaleLowerCase("fr").includes(variableFilter.toLocaleLowerCase("fr")));
+  // Un numéro d'ordre ou un patronyme désigne une ligne, il ne la caractérise
+  // pas : ces colonnes quittent le choix principal pour une section repliée.
+  // Elles restent consultables — c'est là qu'on repère un trou dans la
+  // numérotation ou un doublon de nom. Le rôle vient du backend
+  // (profiling_service.detecter_role).
+  const roleDe = (name: string) =>
+    (variables[name] as { role?: string } | undefined)?.role ?? "analysable";
+  const variablesAnalysables = filteredVariables.filter((name) => roleDe(name) === "analysable");
+  const variablesIdentifiants = filteredVariables.filter((name) => roleDe(name) !== "analysable");
+
+  const renderVariable = (varName: string) => {
+    const varInfo = variables[varName] as { type?: string; pct_manquantes?: number } | undefined;
+    const isSelected = selectedVar === varName;
+    return (
+      <button
+        key={varName}
+        onClick={() => setSelectedVar(varName)}
+        className={`w-full text-left px-4 py-3 rounded-xl transition-all border ${
+          isSelected
+            ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+            : 'bg-gray-50 dark:bg-[#222] border-transparent hover:border-gray-300 dark:hover:border-gray-700'
+        }`}
+      >
+        <div className="flex justify-between items-center">
+          <span className={`font-medium truncate mr-2 ${isSelected ? 'text-blue-700 dark:text-blue-400' : ''}`}>{varName}</span>
+          <span className="text-xs px-2 py-1 bg-gray-200 dark:bg-[#333] text-gray-600 dark:text-gray-300 rounded-md shrink-0">
+            {varInfo?.type ?? "inconnu"}
+          </span>
+        </div>
+        {(varInfo?.pct_manquantes ?? 0) > 0 && (
+          <div className="text-xs text-orange-500 mt-1">
+            {varInfo?.pct_manquantes ?? 0}% manquantes
+          </div>
+        )}
+      </button>
+    );
+  };
   const sortedPreview = sortConfig ? [...preview].sort((a, b) => {
     const left = a[sortConfig.key];
     const right = b[sortConfig.key];
@@ -229,7 +273,11 @@ export default function DashboardPage() {
     const columns = Object.keys(preview[0] || {});
     const escapeCell = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
     const csv = [columns.map(escapeCell).join(","), ...sortedPreview.map((row) => columns.map((column) => escapeCell(row[column])).join(","))].join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    // BOM en tête, comme l'export des prévisions (TimeSeriesModelView) : Excel
+    // ignore le `charset` d'un fichier local et décode avec la page de codes du
+    // système. Sans lui, « Réclamation non fondée » s'ouvre en « RÃ©clamation
+    // non fondÃ©e » — les octets sont pourtant du bon UTF-8.
+    const url = URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" }));
     const link = document.createElement("a");
     link.href = url;
     link.download = `${filename || "donnees"}-apercu.csv`;
@@ -341,33 +389,25 @@ export default function DashboardPage() {
             </label>
             
             <div className="dashboard-variable-list space-y-2 overflow-y-auto custom-scrollbar">
-              {filteredVariables.map((varName) => {
-                const varInfo = variables[varName] as { type?: string; pct_manquantes?: number } | undefined;
-                const isSelected = selectedVar === varName;
-                return (
-                  <button
-                    key={varName}
-                    onClick={() => setSelectedVar(varName)}
-                    className={`w-full text-left px-4 py-3 rounded-xl transition-all border ${
-                      isSelected 
-                        ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800' 
-                        : 'bg-gray-50 dark:bg-[#222] border-transparent hover:border-gray-300 dark:hover:border-gray-700'
-                    }`}
-                  >
-                    <div className="flex justify-between items-center">
-                      <span className={`font-medium truncate mr-2 ${isSelected ? 'text-blue-700 dark:text-blue-400' : ''}`}>{varName}</span>
-                      <span className="text-xs px-2 py-1 bg-gray-200 dark:bg-[#333] text-gray-600 dark:text-gray-300 rounded-md shrink-0">
-                        {varInfo?.type ?? "inconnu"}
-                      </span>
-                    </div>
-                    {(varInfo?.pct_manquantes ?? 0) > 0 && (
-                      <div className="text-xs text-orange-500 mt-1">
-                        {varInfo?.pct_manquantes ?? 0}% manquantes
-                      </div>
-                    )}
-                  </button>
-                )
-              })}
+              {variablesAnalysables.map(renderVariable)}
+
+              {variablesIdentifiants.length > 0 && (
+                <details className="mt-3 rounded-xl border border-gray-200 dark:border-gray-800">
+                  <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium text-gray-600 dark:text-gray-300">
+                    Identifiants et noms ({variablesIdentifiants.length})
+                  </summary>
+                  <div className="space-y-2 px-2 pb-2">
+                    <p className="px-2 pb-1 text-xs text-gray-500 dark:text-gray-400">
+                      Ces colonnes désignent une ligne (numéro d’ordre, identité) au lieu de la caractériser. Leur distribution n’apprend rien, mais elles restent utiles pour repérer un trou dans la numérotation ou un doublon.
+                    </p>
+                    {variablesIdentifiants.map(renderVariable)}
+                  </div>
+                </details>
+              )}
+
+              {variablesAnalysables.length === 0 && variablesIdentifiants.length === 0 && (
+                <p className="px-1 text-sm text-gray-500 dark:text-gray-400">Aucune variable ne correspond à ce filtre.</p>
+              )}
             </div>
           </div>
 
