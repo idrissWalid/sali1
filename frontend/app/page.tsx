@@ -242,15 +242,25 @@ export default function Home() {
 
   const handleUpload = (data: UploadData) => {
     setSessionId(data.session_id);
+
+    // Fichier AJOUTÉ à une session ouverte : il enrichit le contexte existant.
+    // La conversation ne repart pas de zéro et le message d'accueil n'est pas
+    // remplacé — sans quoi ajouter des métadonnées effacerait l'analyse en cours.
+    const ajoutDansSession = data.type === "dataset_added" || data.type === "document_added";
+    const estTabulaire = data.type === "tabular_analyzed" || data.type === "dataset_added";
+
     const newSource: Source = {
       name: data.filename || data.profile?.filename || "Source",
-      type: data.type === "tabular_analyzed" ? "tabular" : "document",
-      meta: data.type === "tabular_analyzed" ? "Données tabulaires" : "Document",
+      type: estTabulaire ? "tabular" : "document",
+      meta: estTabulaire ? "Données tabulaires" : "Document",
     };
     setSources(s => [...s, newSource]);
     setLeftTab("sources");
-    const text = data.type === "tabular_analyzed" ? (data.interpretation ?? "") : (data.summary ?? "");
-    setInitialMessage({ role: "assistant", text, isSummary: data.type === "tabular_analyzed" });
+
+    if (!ajoutDansSession) {
+      const text = data.type === "tabular_analyzed" ? (data.interpretation ?? "") : (data.summary ?? "");
+      setInitialMessage({ role: "assistant", text, isSummary: data.type === "tabular_analyzed" });
+    }
 
     // Rafraîchir l'historique des sessions
     fetchSessions();
@@ -506,6 +516,9 @@ export default function Home() {
                     hideHeader={true}
                     selectedModel={selectedModel}
                     registerUploadHandler={registerUploadHandler}
+                    // Session ouverte : les fichiers suivants s'y rattachent au
+                    // lieu d'ouvrir une session à chaque import.
+                    sessionId={sessionId}
                   />
                 </div>
                 <div style={{ display: leftTab === "history" ? "flex" : "none", height: "100%", flexDirection: "column" }}>

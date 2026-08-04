@@ -300,6 +300,10 @@ def list_datasets(session_id: str) -> list[dict]:
             "source": "upload",
             "rows": profile.get("rows"),
             "columns": profile.get("columns"),
+            # Les NOMS, pas seulement le compte : c'est ce qui permet de dire au
+            # modèle ce que contiennent les autres fichiers de la session, et de
+            # repérer deux fichiers de même structure (voir `jeux_fusionnables`).
+            "column_names": profile.get("column_names") or [],
         })
 
     if session.get("embedded_table_filename"):
@@ -313,6 +317,7 @@ def list_datasets(session_id: str) -> list[dict]:
                 "source": "extracted_table",
                 "rows": profile.get("rows"),
                 "columns": profile.get("columns"),
+                "column_names": profile.get("column_names") or [],
             })
 
     conn = get_db_connection()
@@ -335,9 +340,29 @@ def list_datasets(session_id: str) -> list[dict]:
             "source": row["source"] or "upload",
             "rows": profile.get("rows"),
             "columns": profile.get("columns"),
+            "column_names": profile.get("column_names") or [],
         })
 
     return datasets
+
+
+def jeux_fusionnables(session_id: str, dataset_id: str) -> list[dict]:
+    """Jeux de la session ayant EXACTEMENT les mêmes colonnes que `dataset_id`.
+
+    Sert à proposer une fusion quand un fichier est manifestement la suite d'un
+    autre. La comparaison est stricte — mêmes noms, même ordre : deux tableaux
+    qui ne coïncident qu'à peu près ne se concatènent pas sans dégât, et mieux
+    vaut ne rien proposer que produire un jeu bancal.
+    """
+    jeux = list_datasets(session_id)
+    reference = next((d for d in jeux if d["id"] == dataset_id), None)
+    if not reference or not reference.get("column_names"):
+        return []
+    signature = list(reference["column_names"])
+    return [
+        d for d in jeux
+        if d["id"] != dataset_id and list(d.get("column_names") or []) == signature
+    ]
 
 
 def get_dataset(session_id: str, dataset_id: str | None = None):
@@ -413,22 +438,106 @@ APERÇU (5 premières lignes) :
 Si la question porte sur ces données chiffrées, réponds en te basant sur ce tableau (calculs, comparaisons, tendances), en plus des extraits textuels du document.
 """
 
-def get_data_context(session_id: str, model: str | None = None) -> str:
+def fusionner_jeux(session_id: str, base_id: str, ajout_id: str) -> dict:
+    """Concatène deux jeux de même structure en un troisième.
+
+    Les deux sources sont CONSERVÉES : une fusion mal avisée doit pouvoir être
+    abandonnée en supprimant simplement le jeu produit. La comparaison des
+    colonnes est refaite ici et non tenue pour acquise depuis l'interface — un
+    appel direct à l'API ne doit pas pouvoir coller n'importe quoi.
+    """
+    import io
+
+    import pandas as pd
+
+    from app.services.ingestion_service import load_tabular
+    from app.services.profiling_service import generate_profiling_stats
+
+    jeux = {d["id"]: d for d in list_datasets(session_id)}
+    if base_id not in jeux or ajout_id not in jeux:
+        return {"status": "error", "message": "Jeu de données introuvable dans cette session."}
+    if base_id == ajout_id:
+        return {"status": "error", "message": "Les deux jeux à fusionner sont identiques."}
+
+    colonnes_base = list(jeux[base_id].get("column_names") or [])
+    if not colonnes_base or colonnes_base != list(jeux[ajout_id].get("column_names") or []):
+        return {"status": "error",
+                "message": "Les deux fichiers n'ont pas exactement les mêmes colonnes."}
+
+    def charger(dataset_id: str):
+        octets, nom, _, _ = get_dataset(session_id, dataset_id)
+        if not octets:
+            return None
+        if (nom or "").lower().endswith(".csv"):
+            return pd.read_csv(io.BytesIO(octets))
+        return pd.read_excel(io.BytesIO(octets))
+
+    try:
+        gauche, droite = charger(base_id), charger(ajout_id)
+    except Exception as exc:
+        return {"status": "error", "message": f"Lecture impossible : {exc}"}
+    if gauche is None or droite is None:
+        return {"status": "error", "message": "Fichier introuvable sur le disque."}
+
+    fusion = pd.concat([gauche, droite], ignore_index=True)
+    csv_bytes = fusion.to_csv(index=False).encode("utf-8")
+
+    base_nom = os.path.splitext(jeux[base_id].get("filename") or "donnees")[0]
+    filename = f"{base_nom}_fusionne.csv"
+
+    controle = load_tabular(csv_bytes, filename)
+    if controle.get("status") != "ok":
+        return {"status": "error",
+                "message": controle.get("message", "Le fichier fusionné est illisible.")}
+
+    dataset_id = add_dataset(
+        session_id, csv_bytes, filename,
+        controle["profile"], generate_profiling_stats(fusion),
+        name=f"{jeux[base_id].get('name')} + {jeux[ajout_id].get('name')}",
+        source="merge",
+    )
+    return {
+        "status": "ok",
+        "dataset_id": dataset_id,
+        "filename": filename,
+        "rows": int(len(fusion)),
+        "columns": int(len(fusion.columns)),
+    }
+
+
+def get_data_context(session_id: str, model: str | None = None,
+                     dataset_id: str | None = None) -> str:
     """Contexte de données injecté dans le prompt du chat.
 
     Reconstruit à CHAQUE message : tout caractère superflu ici est rejoué à chaque
     tour, sur tous les backends. D'où la construction dans le budget du modèle
     choisi (voir `prompt_budget`) plutôt qu'un dump intégral raccourci en aval par
     une coupe aveugle au milieu du JSON.
+
+    Une session peut porter plusieurs fichiers (un jeu de données et ses
+    métadonnées, une suite…). Seul le jeu ACTIF est décrit en entier ; les autres
+    sont annoncés en une ligne — assez pour que le modèle sache qu'ils existent
+    sans que le prompt triple de volume à chaque message.
     """
     from app.services.prompt_budget import bloc_apercu, bloc_roles, profil_modele, stats_essentielles
 
     session = get_session(session_id)
-    if not session or not session.get("data_profile"):
+    if not session:
         return ""
 
-    profile = session["data_profile"]
-    stats = session["data_stats"]
+    jeux = list_datasets(session_id)
+    if not jeux:
+        return ""
+
+    # Jeu « actif » : celui que l'utilisateur consulte, sinon le premier (le
+    # fichier principal). Lui seul est décrit en entier.
+    connus = {d["id"] for d in jeux}
+    if dataset_id not in connus:
+        dataset_id = jeux[0]["id"]
+
+    _, filename, profile, stats = get_dataset(session_id, dataset_id)
+    if not profile:
+        return ""
 
     overview = stats.get("dataset_overview", {}) if stats else {}
     variables = stats_essentielles(stats.get("variables", {}) if stats else {})
@@ -437,9 +546,9 @@ def get_data_context(session_id: str, model: str | None = None) -> str:
 
     return f"""
 CONTEXTE DES DONNÉES EN SESSION :
-Fichier : {session['filename']}
-Lignes : {profile['rows']} | Colonnes : {profile['columns']}
-Colonnes disponibles : {', '.join(profile['column_names'])}
+Fichier : {filename}
+Lignes : {profile.get('rows')} | Colonnes : {profile.get('columns')}
+Colonnes disponibles : {', '.join(profile.get('column_names') or [])}
 Doublons : {overview.get('n_doublons', profile.get('duplicates', 0))}
 Variables numériques : {overview.get('n_variables_numeriques', 0)}
 Variables catégorielles : {overview.get('n_variables_categorielles', 0)}
@@ -453,6 +562,39 @@ VALEURS MANQUANTES :
 
 APERÇU (5 premières lignes) :
 {bloc_apercu(profile.get('preview'), budget=profil.budget_contexte // 3)}
+{bloc_autres_jeux(jeux, dataset_id)}"""
+
+
+def bloc_autres_jeux(jeux: list[dict], actif_id: str) -> str:
+    """Les AUTRES fichiers de la session, en une ligne chacun.
+
+    Volontairement réduit au nom, à la taille et aux colonnes : le contexte est
+    rejoué à chaque message, et décrire trois fichiers en entier saturerait un
+    modèle local avant même la question. C'est assez pour que le modèle sache
+    qu'ils existent et propose un croisement — l'utilisateur bascule ensuite sur
+    celui qu'il veut interroger.
+    """
+    autres = [d for d in jeux if d["id"] != actif_id]
+    if not autres:
+        return ""
+
+    lignes = []
+    for jeu in autres:
+        colonnes = jeu.get("column_names") or []
+        apercu = ", ".join(colonnes[:8])
+        if len(colonnes) > 8:
+            apercu += f", … (+{len(colonnes) - 8})"
+        taille = f"{jeu.get('rows')} lignes, {jeu.get('columns')} colonnes"
+        lignes.append(f"- « {jeu.get('name')} » : {taille}"
+                      + (f"\n  Colonnes : {apercu}" if apercu else ""))
+
+    return f"""
+AUTRES FICHIERS DE CETTE SESSION :
+{chr(10).join(lignes)}
+
+Tu sais qu'ils existent et tu peux suggérer de les croiser avec le fichier
+ci-dessus, mais tu n'as PAS leur contenu : ne cite aucun chiffre à leur sujet.
+Pour les analyser, l'utilisateur doit les sélectionner dans le tableau de bord.
 """
 
 def save_message_to_report(session_id: str, role: str, text: str, images: list = [], sources: list = []):

@@ -22,6 +22,8 @@ interface UploadData {
   type: string;
   interpretation?: string;
   summary?: string;
+  /** Renseigné quand le fichier a été rattaché à une session déjà ouverte. */
+  dataset_id?: string;
 }
 
 interface Props {
@@ -32,9 +34,11 @@ interface Props {
   style?: React.CSSProperties;
   selectedModel?: string;
   registerUploadHandler?: (handler: (() => void) | null) => void;
+  /** Session ouverte : les imports suivants s'y rattachent au lieu d'en créer une. */
+  sessionId?: string | null;
 }
 
-export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader = false, style, selectedModel, registerUploadHandler }: Props) {
+export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader = false, style, selectedModel, registerUploadHandler, sessionId }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isUploadHovered, setIsUploadHovered] = useState(false);
   const [loadingState, setLoadingState] = useState<{
@@ -52,6 +56,78 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
 
+  // Fusion proposée quand un fichier ajouté a exactement les mêmes colonnes
+  // qu'un jeu déjà présent — le cas du tableau livré en deux parties. Jamais
+  // automatique : concaténer des données est une décision de l'utilisateur.
+  const [fusionProposee, setFusionProposee] = useState<{
+    sessionId: string;
+    nouveauId: string;
+    nouveauNom: string;
+    nouveauLignes?: number;
+    candidatId: string;
+    candidatNom: string;
+    candidatLignes?: number;
+  } | null>(null);
+  const [fusionEnCours, setFusionEnCours] = useState(false);
+  const [fusionErreur, setFusionErreur] = useState("");
+
+  type JeuDeDonnees = { id: string; name: string; rows?: number };
+
+  const proposerFusion = async (sid: string, nouveauId: string) => {
+    try {
+      const res = await fetch(`${API_URL}/api/sessions/${sid}/datasets`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const candidats: string[] = data.fusionnables?.[nouveauId] ?? [];
+      if (candidats.length === 0) return;
+
+      const jeux: JeuDeDonnees[] = data.datasets ?? [];
+      const nouveau = jeux.find((j) => j.id === nouveauId);
+      const candidat = jeux.find((j) => j.id === candidats[0]);
+      if (!nouveau || !candidat) return;
+
+      setFusionErreur("");
+      setFusionProposee({
+        sessionId: sid,
+        nouveauId, nouveauNom: nouveau.name, nouveauLignes: nouveau.rows,
+        candidatId: candidat.id, candidatNom: candidat.name, candidatLignes: candidat.rows,
+      });
+    } catch {
+      // La fusion n'est qu'une commodité : son échec ne doit pas gêner l'import.
+    }
+  };
+
+  const confirmerFusion = async () => {
+    if (!fusionProposee) return;
+    setFusionEnCours(true);
+    setFusionErreur("");
+    try {
+      const res = await fetch(
+        `${API_URL}/api/sessions/${fusionProposee.sessionId}/datasets/merge`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            base_id: fusionProposee.candidatId,
+            ajout_id: fusionProposee.nouveauId,
+          }),
+        },
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(data?.detail || "La fusion a échoué.");
+      setFusionProposee(null);
+      onUpload({
+        session_id: fusionProposee.sessionId,
+        type: "dataset_added",
+        filename: data?.filename,
+      });
+    } catch (err) {
+      setFusionErreur(err instanceof Error ? err.message : "La fusion a échoué.");
+    } finally {
+      setFusionEnCours(false);
+    }
+  };
+
   useEffect(() => {
     registerUploadHandler?.(() => setIsUploadModalOpen(true));
     return () => {
@@ -68,6 +144,11 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
     const model = selectedModel?.trim();
     if (model) formData.append("model", model);
     formData.append("index_doc", "true");
+    // Une session déjà ouverte reçoit le fichier comme source SUPPLÉMENTAIRE.
+    // Sans cet identifiant, le backend créait une nouvelle session à chaque
+    // import : impossible de charger un jeu de données et ses métadonnées, ou
+    // un tableau livré en deux parties, dans un même contexte.
+    if (sessionId) formData.append("session_id", sessionId);
 
     setLoadingState({
       isLoading: true,
@@ -132,6 +213,11 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
             finalData.filename = f.name;
             onUpload(finalData);
             setLoadingState(prev => ({ ...prev, isLoading: false }));
+            // Fichier ajouté à une session : peut-être la suite d'un jeu déjà
+            // présent. On le vérifie après coup pour ne pas retarder l'import.
+            if (finalData.type === "dataset_added" && finalData.session_id && finalData.dataset_id) {
+              void proposerFusion(finalData.session_id, finalData.dataset_id);
+            }
             return;
           }
         }
@@ -480,6 +566,63 @@ export default function SourcesPanel({ sources, onUpload, onRemove, hideHeader =
             Formats supportés : CSV, XLSX, XLS, PDF, DOCX, MD, TEX
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={fusionProposee !== null}
+        onClose={() => { if (!fusionEnCours) setFusionProposee(null); }}
+        title="Ce fichier est-il la suite d’un autre ?"
+        maxWidth="480px"
+      >
+        {fusionProposee && (
+          <div className="flex flex-col gap-4" style={{ color: "var(--text-main)" }}>
+            <p style={{ fontSize: "14px", lineHeight: 1.6, color: "var(--text-muted)" }}>
+              <strong style={{ color: "var(--text-main)" }}>{fusionProposee.nouveauNom}</strong>{" "}
+              a exactement les mêmes colonnes que{" "}
+              <strong style={{ color: "var(--text-main)" }}>{fusionProposee.candidatNom}</strong>.
+              Vous pouvez les réunir en un seul jeu de données, ou les garder séparés.
+            </p>
+            <div style={{
+              fontSize: "13px", lineHeight: 1.8, padding: "12px 14px",
+              borderRadius: "10px", background: "var(--bubble-ai)",
+              border: "1px solid var(--border-muted)",
+            }}>
+              <div>{fusionProposee.candidatNom} — {fusionProposee.candidatLignes ?? "?"} lignes</div>
+              <div>{fusionProposee.nouveauNom} — {fusionProposee.nouveauLignes ?? "?"} lignes</div>
+              {typeof fusionProposee.candidatLignes === "number"
+                && typeof fusionProposee.nouveauLignes === "number" && (
+                <div style={{ marginTop: "6px", fontWeight: 600 }}>
+                  Une fois réunis : {fusionProposee.candidatLignes + fusionProposee.nouveauLignes} lignes
+                </div>
+              )}
+            </div>
+            <p style={{ fontSize: "12px", color: "var(--text-dim)" }}>
+              Les deux fichiers d’origine sont conservés : le jeu réuni s’ajoute à côté.
+            </p>
+            {fusionErreur && (
+              <p role="alert" style={{ fontSize: "13px", color: "var(--status-danger)" }}>{fusionErreur}</p>
+            )}
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setFusionProposee(null)}
+                disabled={fusionEnCours}
+                className="dashboard-secondary-action"
+              >
+                Les garder séparés
+              </button>
+              <button
+                type="button"
+                onClick={confirmerFusion}
+                disabled={fusionEnCours}
+                className="dashboard-secondary-action"
+                style={{ background: "var(--accent-color)", color: "var(--bg-app)", borderColor: "var(--accent-color)" }}
+              >
+                {fusionEnCours ? "Fusion en cours…" : "Réunir en un seul jeu"}
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
 
     </div>

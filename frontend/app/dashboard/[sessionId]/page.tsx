@@ -90,6 +90,8 @@ export default function DashboardPage() {
   const [questionError, setQuestionError] = useState<{ context: string; text: string } | null>(null);
   const [variableFilter, setVariableFilter] = useState("");
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: "asc" | "desc" } | null>(null);
+  const [exportEnCours, setExportEnCours] = useState(false);
+  const [exportErreur, setExportErreur] = useState("");
 
   useEffect(() => {
     const fetchData = async () => {
@@ -283,6 +285,36 @@ export default function DashboardPage() {
     link.download = `${filename || "donnees"}-apercu.csv`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Le jeu de données ENTIER, servi par le backend. L'export ci-dessus ne porte
+  // que les cinq lignes affichées : réimporté tel quel — son nom en « -apercu »
+  // n'y suffisait pas — il donne un jeu de données de cinq lignes, ce qui ne se
+  // remarque qu'après coup.
+  //
+  // Passe par `fetch` et non par un lien direct : le client ajoute l'en-tête
+  // X-API-Key aux appels `fetch` (voir NgrokFetchPatch), qu'une navigation
+  // ordinaire n'emporterait pas — le téléchargement échouerait en 401 dès que
+  // l'authentification est activée.
+  const exportComplet = async () => {
+    setExportErreur("");
+    setExportEnCours(true);
+    try {
+      const query = selectedDataset ? `?dataset_id=${encodeURIComponent(selectedDataset)}` : "";
+      const res = await fetch(`${API_URL}/api/dashboard/export/${sessionId}${query}`);
+      if (!res.ok) throw new Error(`Le serveur a répondu ${res.status}.`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename || "donnees.csv";
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setExportErreur(err instanceof Error ? err.message : "Échec du téléchargement.");
+    } finally {
+      setExportEnCours(false);
+    }
   };
 
   const handleChartQuestion = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -676,8 +708,24 @@ export default function DashboardPage() {
         <div className="dashboard-panel dashboard-preview bg-white dark:bg-[#1a1a1a] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-xl font-bold">Aperçu des données ({preview.length} premières lignes)</h2>
-            <button type="button" onClick={exportPreview} className="dashboard-secondary-action"><Download animateOnHover className="h-4 w-4" /> Exporter CSV</button>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Deux exports distincts, et nommés comme tels : « Exporter CSV »
+                  seul laissait croire qu'on obtenait les données, alors qu'il ne
+                  rend que les lignes affichées. */}
+              <button type="button" onClick={exportPreview} className="dashboard-secondary-action">
+                <Download animateOnHover className="h-4 w-4" /> Exporter l’aperçu ({preview.length} lignes)
+              </button>
+              <button type="button" onClick={exportComplet} disabled={exportEnCours} className="dashboard-secondary-action">
+                <Download animateOnHover className="h-4 w-4" />
+                {exportEnCours
+                  ? "Téléchargement…"
+                  : `Exporter tout${overview.n_lignes ? ` (${overview.n_lignes.toLocaleString("fr")} lignes)` : ""}`}
+              </button>
+            </div>
           </div>
+          {exportErreur && (
+            <p role="alert" className="mb-3 text-sm text-orange-500">{exportErreur}</p>
+          )}
           <div className="overflow-x-auto custom-scrollbar pb-4">
             <table className="w-full text-sm text-left">
               <thead className="text-xs uppercase bg-gray-50 dark:bg-[#222] text-gray-600 dark:text-gray-300">

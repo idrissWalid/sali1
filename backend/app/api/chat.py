@@ -48,6 +48,9 @@ class ChatRequest(BaseModel):
     # Langue de réponse : "fr" par défaut (le produit est francophone). Les
     # campagnes d'évaluation passent "en" — voir gemini_service.response_language.
     language: Optional[str] = None
+    # Jeu de données interrogé, quand la session en porte plusieurs. Absent, on
+    # retombe sur le fichier principal — le comportement d'avant le multi-fichier.
+    dataset_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
@@ -413,8 +416,13 @@ Après chaque affirmation qui s'appuie sur un extrait ci-dessus, ajoute immédia
     else:
         # `request.model` conditionne le budget du contexte : un modèle local reçoit
         # un aperçu borné là où une API en reçoit un complet (voir `prompt_budget`).
-        data_context = get_data_context(request.session_id, model=request.model)
-        file_bytes, filename = get_file_bytes(request.session_id)
+        data_context = get_data_context(request.session_id, model=request.model,
+                                        dataset_id=request.dataset_id)
+        # Les calculs (pandasai, sandbox, modèles) doivent porter sur le MÊME
+        # fichier que celui décrit dans le contexte, sans quoi le modèle
+        # raisonnerait sur un jeu et l'on exécuterait le code sur un autre.
+        from app.services.session_service import get_dataset
+        file_bytes, filename, _, _ = get_dataset(request.session_id, request.dataset_id)
         yield _step("thinking", "Analyse de votre question…")
         intent = await to_thread(detect_intent, request.message, request.model)
         async for event in _run_dataset_intent(

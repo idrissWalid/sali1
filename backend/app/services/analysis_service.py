@@ -458,24 +458,132 @@ async def analyze_tabular(
 _variable_interpretation_cache: dict[tuple[str, str, str], str] = {}
 
 
-def _build_variable_interpretation_prompt(var_name: str, var_stats: dict, overview: dict) -> str:
-    """Construit le prompt d'interprétation d'UNE variable pour le dashboard."""
+def _charger_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Le jeu de données, quel que soit son format d'origine."""
+    import io
+
+    if (filename or "").lower().endswith(".csv"):
+        return pd.read_csv(io.BytesIO(file_bytes))
+    return pd.read_excel(io.BytesIO(file_bytes))
+
+
+def _nombre(valeur, decimales: int = 2) -> str:
+    """Nombre écrit lisiblement, sans traîne de flottant."""
+    if valeur is None:
+        return "non calculé"
+    if isinstance(valeur, bool):
+        return "oui" if valeur else "non"
+    if isinstance(valeur, (int, float)):
+        if isinstance(valeur, float):
+            if not math.isfinite(valeur):
+                return "non calculé"
+            if valeur == int(valeur):
+                return str(int(valeur))
+            return f"{round(valeur, decimales)}"
+        return str(valeur)
+    return str(valeur)
+
+
+def _bloc_repartition(serie: pd.Series, limite: int = 12) -> str:
+    """Répartition réelle par modalité, en toutes lettres.
+
+    C'est LE bloc qui manquait. Sans lui, le prompt ne portait que des agrégats
+    dont les noms prêtent à confusion : sur une colonne « Sexe » à 4 hommes et
+    1 femme, `pct_valeurs_distinctes: 40` (2 modalités sur 5 lignes) a été lu
+    comme « 40 % d'hommes », et le complément à 100 inventé pour les femmes. Le
+    modèle n'avait aucun moyen de connaître la vraie répartition.
+    """
+    valeurs = serie.dropna()
+    if valeurs.empty:
+        return "Aucune valeur renseignée."
+
+    comptes = valeurs.astype(str).value_counts()
+    total = int(valeurs.shape[0])
+    lignes = [
+        f"- « {modalite} » : {int(effectif)} sur {total} ({round(100 * effectif / total, 1)} %)"
+        for modalite, effectif in comptes.head(limite).items()
+    ]
+    if len(comptes) > limite:
+        reste = int(comptes.iloc[limite:].sum())
+        lignes.append(f"- {len(comptes) - limite} autres modalités : {reste} au total")
+    return "\n".join(lignes)
+
+
+def _bloc_stats_numeriques(var_stats: dict) -> str:
+    """Statistiques numériques nommées en clair.
+
+    Le JSON brut était livré tel quel, avec ses clés techniques : un modèle
+    modeste confond `pct_valeurs_distinctes` avec une part de catégorie, ou
+    commente `skewness` sans savoir ce que le mot désigne.
+    """
+    libelles = [
+        ("moyenne", "Moyenne"), ("mediane", "Médiane"), ("ecart_type", "Écart-type"),
+        ("coefficient_variation", "Coefficient de variation (écart-type / moyenne)"),
+        ("min", "Minimum"), ("max", "Maximum"), ("q1", "1er quartile (Q1)"),
+        ("q3", "3e quartile (Q3)"), ("iqr", "Écart interquartile (Q3 − Q1)"),
+        ("skewness", "Asymétrie (0 = symétrique, >0 = étalée vers la droite)"),
+        ("kurtosis", "Aplatissement (0 = normale, >0 = pics et valeurs extrêmes)"),
+        ("n_zeros", "Nombre de zéros"),
+    ]
+    return "\n".join(
+        f"- {libelle} : {_nombre(var_stats[cle])}"
+        for cle, libelle in libelles
+        if var_stats.get(cle) is not None
+    )
+
+
+_ROLES_NON_ANALYSABLES = {
+    "identifiant_ligne": "un simple numéro d'ordre des lignes",
+    "nominatif": "une identité de personne",
+    "identifiant": "un identifiant",
+}
+
+
+def _build_variable_interpretation_prompt(var_name: str, var_stats: dict, overview: dict,
+                                          serie: "pd.Series | None" = None) -> str:
+    """Prompt d'interprétation d'UNE variable pour le dashboard."""
     n_rows = overview.get("n_lignes") or overview.get("n_rows") or "?"
-    return f"""Tu es un analyste de données. Rédige une interprétation claire et accessible, en français, de la distribution de la variable ci-dessous. Cette interprétation accompagne le graphique de la variable dans un tableau de bord.
+    manquantes = var_stats.get("n_manquantes") or 0
+    pct_manquantes = var_stats.get("pct_manquantes") or 0
+    est_numerique = var_stats.get("type") == "Numeric"
 
-Variable analysée : « {var_name} »
-Nombre total de lignes du jeu de données : {n_rows}
+    if est_numerique:
+        corps = _bloc_stats_numeriques(var_stats)
+    elif serie is not None:
+        corps = "Répartition observée :\n" + _bloc_repartition(serie)
+    else:
+        dominante = var_stats.get("valeur_dominante")
+        frequence = var_stats.get("frequence_dominante")
+        corps = (f"Valeur la plus fréquente : « {dominante} », {frequence} fois."
+                 if dominante else "Aucune répartition disponible.")
 
-Statistiques disponibles pour cette variable :
-{json.dumps(var_stats, ensure_ascii=False, indent=2)}
+    role = var_stats.get("role")
+    mise_en_garde = ""
+    if role in _ROLES_NON_ANALYSABLES:
+        mise_en_garde = (
+            f"\nATTENTION : cette colonne est {_ROLES_NON_ANALYSABLES[role]}, pas une "
+            "grandeur mesurée. Dis simplement à quoi elle sert et signale une anomalie "
+            "si tu en vois une (doublon, trou dans la numérotation). N'en tire ni "
+            "moyenne, ni tendance, ni interprétation statistique.\n"
+        )
 
-Consignes STRICTES :
-- 2 à 4 phrases courtes maximum. Va droit au but, AUCUNE formule d'introduction ("Voici", "Cette variable...", "En tant que...").
-- Mets en avant ce qui est réellement notable selon le type : tendance centrale et dispersion, asymétrie (skewness), valeurs extrêmes, catégorie dominante et déséquilibre, valeurs manquantes.
-- Si une valeur manquante est élevée (>10%) ou un déséquilibre marqué existe, signale-le.
-- Termine par une courte implication analytique concrète si pertinent (ex: "à normaliser avant modélisation", "catégorie sur-représentée à surveiller").
-- N'invente aucun chiffre : appuie-toi uniquement sur les statistiques fournies.
-- Arrondis toute valeur décimale à deux chiffres maximum après la virgule.
+    return f"""Explique en français, simplement, ce que montre le graphique de la colonne « {var_name} ».
+Tu t'adresses à quelqu'un qui lit un tableau de bord, pas à un statisticien.
+
+Le jeu de données compte {n_rows} lignes. Cette colonne a {manquantes} valeur(s) manquante(s) ({_nombre(pct_manquantes)} %).
+{mise_en_garde}
+{corps}
+
+Comment écrire :
+- 3 à 5 phrases. Ton d'un analyste compétent qui explique à un collègue : précis, mais fluide.
+- Commence directement par le constat. Pas de « Voici », « Cette variable », « L'analyse montre ».
+- LIS les chiffres, ne les récite pas. « Moyenne 14,42, écart-type 0,33 » n'apprend rien ; « les notes sont très resserrées autour de 14,4 — un écart-type de 0,33 sur cette échelle, c'est presque rien » dit quelque chose.
+- Les termes statistiques sont bienvenus quand ils portent du sens (dispersion, asymétrie, valeurs atypiques, quartiles, concentration). Emploie-les correctement, et glisse en passant ce qu'ils veulent dire plutôt que de les lâcher tels quels.
+- Regarde en particulier : l'écart entre moyenne et médiane (signe d'asymétrie ou de valeurs extrêmes), la dispersion rapportée à l'échelle des valeurs, l'étendue par rapport à l'intervalle interquartile (valeurs isolées), et pour une variable qualitative le degré de concentration sur une modalité.
+- Les seuls chiffres autorisés sont ceux écrits ci-dessus. N'en déduis JAMAIS d'autres : si tu lis qu'une catégorie représente 80 %, n'écris pas que le reste fait 20 % à moins que ce soit indiqué.
+- Ne dis « équilibré » que si les parts sont effectivement proches.
+- Si plus de 10 % des valeurs manquent, ou si une modalité écrase les autres, dis-le et dis en quoi cela gêne l'analyse.
+- Termine par une conséquence ANALYTIQUE précise, ou par rien du tout. Une remarque qui resterait vraie sur n'importe quel jeu de données (« veillez à adapter vos actions », « il serait utile de vérifier ») ne vaut pas la peine d'être écrite. Une remarque utile ressemble à : « la moyenne décrit mal cette distribution, la médiane est plus fiable ici », « cette modalité est trop rare pour entraîner un modèle dessus », « ces valeurs isolées méritent d'être vérifiées avant tout calcul de moyenne ».
 """
 
 
@@ -505,7 +613,7 @@ async def interpret_variable(
     if cache_key in _variable_interpretation_cache:
         return {"variable": variable, "interpretation": _variable_interpretation_cache[cache_key], "cached": True}
 
-    _, _, _, stats = get_dataset(session_id, dataset_id)
+    file_bytes, filename, _, stats = get_dataset(session_id, dataset_id)
     stats = stats or {}
     variables = stats.get("variables", {})
     overview = stats.get("dataset_overview", {})
@@ -514,7 +622,20 @@ async def interpret_variable(
     if var_stats is None:
         return {"error": f"Variable « {variable} » introuvable dans ce jeu de données."}
 
-    prompt = _build_variable_interpretation_prompt(variable, var_stats, overview)
+    # La colonne elle-même, pour donner au modèle la répartition RÉELLE plutôt
+    # que des agrégats qu'il doit interpréter — voir `_bloc_repartition`. Le
+    # résultat étant mis en cache, ce chargement n'a lieu qu'une fois par
+    # variable.
+    serie = None
+    if var_stats.get("type") != "Numeric" and file_bytes:
+        try:
+            df = await asyncio.to_thread(_charger_dataframe, file_bytes, filename)
+            if variable in df.columns:
+                serie = df[variable]
+        except Exception:
+            serie = None  # On retombe sur les agrégats, moins précis mais valides.
+
+    prompt = _build_variable_interpretation_prompt(variable, var_stats, overview, serie)
     try:
         interpretation = (await asyncio.to_thread(complete_text, prompt, model)).strip()
     except Exception as exc:

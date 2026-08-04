@@ -90,6 +90,51 @@ async def get_dashboard_data_endpoint(session_id: str, dataset_id: str | None = 
     return data
 
 
+@app.get("/api/dashboard/export/{session_id}")
+async def export_dashboard_dataset(session_id: str, dataset_id: str | None = None):
+    """Jeu de données COMPLET, en téléchargement.
+
+    À ne pas confondre avec l'export du tableau d'aperçu côté interface, qui ne
+    porte que les cinq lignes affichées. C'est ici qu'on récupère la table
+    entière — en particulier celle extraite d'un PDF scanné, qui n'existe sous
+    forme de fichier nulle part ailleurs.
+    """
+    from urllib.parse import quote
+
+    from fastapi import HTTPException
+    from fastapi.responses import Response
+
+    from app.services.session_service import get_dataset, list_datasets
+
+    disponibles = list_datasets(session_id)
+    if not disponibles:
+        raise HTTPException(status_code=404, detail="Aucun jeu de données pour cette session.")
+
+    connus = {item["id"] for item in disponibles}
+    if dataset_id not in connus:
+        dataset_id = disponibles[0]["id"]
+
+    file_bytes, filename, _, _ = get_dataset(session_id, dataset_id)
+    if not file_bytes:
+        raise HTTPException(status_code=404, detail="Fichier introuvable.")
+
+    filename = filename or "donnees.csv"
+    est_csv = filename.lower().endswith(".csv")
+    if est_csv and not file_bytes.startswith(b"\xef\xbb\xbf"):
+        # BOM : sans lui Excel décode un CSV local avec la page de codes système
+        # et affiche « RÃ©clamation » au lieu de « Réclamation ».
+        file_bytes = b"\xef\xbb\xbf" + file_bytes
+
+    # `filename*` en RFC 5987 : les noms de nos fichiers portent des accents,
+    # que l'en-tête `filename=` seul ne sait pas transporter.
+    disposition = f"attachment; filename*=UTF-8''{quote(filename)}"
+    return Response(
+        content=file_bytes,
+        media_type="text/csv; charset=utf-8" if est_csv else "application/octet-stream",
+        headers={"Content-Disposition": disposition},
+    )
+
+
 @app.get("/api/dashboard/interpret/{session_id}")
 async def interpret_dashboard_variable(
     session_id: str,

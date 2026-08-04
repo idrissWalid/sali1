@@ -327,8 +327,15 @@ async def upload_file(
             await asyncio.sleep(0.05)
 
             try:
-                session_id = create_session()
-                set_session_type(session_id, "document")
+                # Rattachement à une session ouverte : le document rejoint la
+                # collection ChromaDB existante (`index_document` fait
+                # `get_or_create_collection` puis `add`, avec le nom du fichier
+                # en métadonnée). Ni le titre ni l'historique ne sont touchés —
+                # on ajoute une source, on ne recommence pas une session.
+                document_ajoute = bool(attach_to_session)
+                session_id = attach_to_session or create_session()
+                if not document_ajoute:
+                    set_session_type(session_id, "document")
 
                 if index_doc.lower() == "true":
                     index_result = await asyncio.to_thread(index_document, session_id, file_bytes, filename)
@@ -354,10 +361,37 @@ async def upload_file(
                     table_check = await asyncio.to_thread(load_tabular, table_csv_bytes, table_filename)
                     if table_check["status"] == "ok":
                         table_stats = await asyncio.to_thread(generate_profiling_stats, embedded_table_df)
-                        save_embedded_table(session_id, table_csv_bytes, table_filename, table_check["profile"], table_stats)
+                        if document_ajoute:
+                            # `save_embedded_table` écrit dans l'unique emplacement
+                            # de la session : sur un document ajouté, il écraserait
+                            # le tableau du document précédent.
+                            from app.services.session_service import add_dataset
+                            add_dataset(session_id, table_csv_bytes, table_filename,
+                                        table_check["profile"], table_stats,
+                                        name=f"Tableau extrait — {table_filename}",
+                                        source="extracted_table")
+                        else:
+                            save_embedded_table(session_id, table_csv_bytes, table_filename,
+                                                table_check["profile"], table_stats)
                         has_embedded_table = True
                 except Exception:
                     pass  # Le résumé du document reste utile même si le dataset secondaire échoue.
+
+            if document_ajoute:
+                # Source ajoutée à une session ouverte : elle est indexée et
+                # interrogeable. Pas de résumé ni de renommage — la session garde
+                # son sujet, on lui a seulement donné une source de plus.
+                yield dumps_safe({
+                    "status": "completed",
+                    "data": {
+                        "type": "document_added",
+                        "session_id": session_id,
+                        "filename": filename,
+                        "chunks_indexed": chunks_indexed,
+                        "has_embedded_table": has_embedded_table,
+                    }
+                }) + "\n"
+                return
 
             # Étape 3 : Analyse et résumé IA
             yield dumps_safe({

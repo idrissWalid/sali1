@@ -99,6 +99,53 @@ async def rename_session_endpoint(session_id: str, request: SessionRenameRequest
 
     return {"status": "ok", "title": title}
 
+class FusionRequest(BaseModel):
+    base_id: str
+    ajout_id: str
+
+
+@router.get("/sessions/{session_id}/datasets")
+async def list_session_datasets(session_id: str):
+    """Fichiers rattachés à une session, et ceux qui pourraient être fusionnés.
+
+    Une session porte souvent plusieurs fichiers — un jeu de données et ses
+    métadonnées, ou un tableau livré en deux parties. `fusionnables` signale
+    les paires de structure identique, pour que l'interface propose la
+    concaténation sans jamais la décider seule.
+    """
+    from app.services.session_service import jeux_fusionnables, list_datasets
+
+    if not get_session(session_id):
+        raise HTTPException(status_code=404, detail="Session introuvable.")
+
+    jeux = list_datasets(session_id)
+    return {
+        "datasets": jeux,
+        "fusionnables": {
+            jeu["id"]: [autre["id"] for autre in jeux_fusionnables(session_id, jeu["id"])]
+            for jeu in jeux
+        },
+    }
+
+
+@router.post("/sessions/{session_id}/datasets/merge")
+async def merge_session_datasets(session_id: str, payload: FusionRequest):
+    """Concatène deux fichiers de même structure en un nouveau jeu.
+
+    Les deux sources sont conservées : la fusion s'annule en supprimant le jeu
+    produit.
+    """
+    from app.services.session_service import fusionner_jeux
+
+    if not get_session(session_id):
+        raise HTTPException(status_code=404, detail="Session introuvable.")
+
+    resultat = fusionner_jeux(session_id, payload.base_id, payload.ajout_id)
+    if resultat.get("status") != "ok":
+        raise HTTPException(status_code=400, detail=resultat.get("message", "Fusion impossible."))
+    return resultat
+
+
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str):
     # Supprime la session, ses messages, ses datasets/modèles secondaires (via
