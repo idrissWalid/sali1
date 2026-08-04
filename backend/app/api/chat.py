@@ -3,7 +3,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import asyncio
-import json
+# `dumps_safe` et non `json.dumps` : un `NaN` (statistique non calculable, cellule
+# vide) serait écrit tel quel, alors qu'il n'existe pas en JSON. `JSON.parse`
+# rejetterait la ligne et le client passerait à la suivante — la réponse serait
+# perdue. Un StreamingResponse ne bénéficie pas de `SafeJSONResponse`.
+from app.core.json_utils import dumps_safe
 
 def to_thread(func, /, *args, **kwargs):
     """Raccourci vers asyncio.to_thread : tous les appels LLM/pandas/sandbox de
@@ -441,14 +445,14 @@ async def chat_stream(request: ChatRequest):
     async def event_generator():
         try:
             async for event in _run_chat(request):
-                yield json.dumps(event, ensure_ascii=False) + "\n"
+                yield dumps_safe(event, ensure_ascii=False) + "\n"
                 # Laisse la boucle d'événements écrire la ligne avant que
                 # l'étape suivante ne monopolise le thread.
                 await asyncio.sleep(0)
         except HTTPException as exc:
-            yield json.dumps({"type": "error", "message": exc.detail}, ensure_ascii=False) + "\n"
+            yield dumps_safe({"type": "error", "message": exc.detail}, ensure_ascii=False) + "\n"
         except Exception as exc:  # pragma: no cover - filet de sécurité
-            yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False) + "\n"
+            yield dumps_safe({"type": "error", "message": str(exc)}, ensure_ascii=False) + "\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
 

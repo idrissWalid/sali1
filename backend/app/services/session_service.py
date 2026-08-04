@@ -67,9 +67,9 @@ def save_data_context(session_id: str, profile: dict, stats: dict, filename: str
         (
             title,
             filename,
-            json.dumps(profile),
-            json.dumps(stats),
-            json.dumps(profile.get("preview")) if profile else None,
+            dumps_safe(profile),
+            dumps_safe(stats),
+            dumps_safe(profile.get("preview")) if profile else None,
             session_id
         )
     )
@@ -224,7 +224,7 @@ def save_embedded_table(session_id: str, file_bytes: bytes, filename: str, profi
             embedded_table_profile = ?, embedded_table_stats = ?
         WHERE id = ?
         """,
-        (filename, file_path, json.dumps(profile), json.dumps(stats), session_id)
+        (filename, file_path, dumps_safe(profile), dumps_safe(stats), session_id)
     )
     conn.commit()
     conn.close()
@@ -271,7 +271,7 @@ def add_dataset(session_id: str, file_bytes: bytes, filename: str, profile: dict
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (dataset_id, session_id, name or filename, filename, file_path,
-         json.dumps(profile), json.dumps(stats), source)
+         dumps_safe(profile), dumps_safe(stats), source)
     )
     conn.commit()
     conn.close()
@@ -405,7 +405,7 @@ Lignes : {profile['rows']} | Colonnes : {profile['columns']}
 Colonnes disponibles : {', '.join(profile['column_names'])}
 {bloc_roles(variables)}
 STATISTIQUES PAR VARIABLE :
-{json.dumps(variables, ensure_ascii=False, indent=2)}
+{dumps_safe(variables, indent=2)}
 
 APERÇU (5 premières lignes) :
 {bloc_apercu(profile.get('preview'), budget=profil.budget_contexte // 4)}
@@ -446,10 +446,10 @@ Variables catégorielles : {overview.get('n_variables_categorielles', 0)}
 Valeurs manquantes totales : {overview.get('n_valeurs_manquantes_total', 0)}
 {bloc_roles(variables)}
 STATISTIQUES PAR VARIABLE :
-{json.dumps(variables, ensure_ascii=False, indent=2)}
+{dumps_safe(variables, indent=2)}
 
 VALEURS MANQUANTES :
-{json.dumps(missing, ensure_ascii=False, indent=2) if missing else "Aucune."}
+{dumps_safe(missing, indent=2) if missing else "Aucune."}
 
 APERÇU (5 premières lignes) :
 {bloc_apercu(profile.get('preview'), budget=profil.budget_contexte // 3)}

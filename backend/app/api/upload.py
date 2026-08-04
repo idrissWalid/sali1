@@ -1,8 +1,15 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, Form
 from fastapi.responses import StreamingResponse
 from pathlib import Path
-import json
 import asyncio
+# Les événements de ce flux sont sérialisés avec `dumps_safe` et non `json.dumps` :
+# un `NaN` de pandas (cellule vide de l'aperçu) est écrit littéralement par la
+# bibliothèque standard, or `NaN` n'existe pas en JSON. `JSON.parse` rejette alors
+# la ligne côté navigateur, et comme le client passe à la suivante, c'est
+# l'événement final qui disparaît — l'import semble ne jamais aboutir.
+# `SafeJSONResponse` ne protège pas ici : un StreamingResponse ne passe pas par
+# la classe de réponse par défaut.
+from app.core.json_utils import dumps_safe
 from app.services.ingestion_service import detect_file_type, load_tabular, extract_table_from_pdf
 from app.services.analysis_service import analyze_tabular
 from app.services.session_service import create_session, save_data_context, add_to_history
@@ -120,7 +127,7 @@ async def upload_file(
 
     async def event_generator():
         # Étape 1 : Lecture et détection du format
-        yield json.dumps({
+        yield dumps_safe({
             "status": "processing",
             "step": 1,
             "message": "Lecture et détection du format du fichier..."
@@ -132,7 +139,7 @@ async def upload_file(
             filename = file.filename
             file_type = detect_file_type(filename)
         except Exception as e:
-            yield json.dumps({
+            yield dumps_safe({
                 "status": "error",
                 "message": "Une erreur est survenue lors de la lecture du fichier.",
                 "technical": str(e)
@@ -140,7 +147,7 @@ async def upload_file(
             return
 
         if file_type == "unsupported":
-            yield json.dumps({
+            yield dumps_safe({
                 "status": "error",
                 "message": "Format non supporté. Utilisez CSV, Excel, PDF, DOCX, Markdown ou LaTeX.",
                 "technical": "Unsupported file format"
@@ -150,7 +157,7 @@ async def upload_file(
         if file_type == "document":
             embedded_table_df = None
             is_pdf = Path(filename).suffix.lower() == ".pdf"
-            yield json.dumps({
+            yield dumps_safe({
                 "status": "processing",
                 "step": 1,
                 "message": "Lecture du document..."
@@ -187,7 +194,7 @@ async def upload_file(
 
         if file_type == "tabular":
             # Étape 2 : Analyse structurelle
-            yield json.dumps({
+            yield dumps_safe({
                 "status": "processing",
                 "step": 2,
                 "message": "Analyse structurelle et calcul des statistiques..."
@@ -197,7 +204,7 @@ async def upload_file(
             try:
                 check = await asyncio.to_thread(load_tabular, file_bytes, filename)
                 if check["status"] == "error":
-                    yield json.dumps({
+                    yield dumps_safe({
                         "status": "error",
                         "message": "Votre fichier n'a pas pu être lu. Vérifiez qu'il n'est pas corrompu.",
                         "technical": check.get("message", "Error loading tabular data")
@@ -205,7 +212,7 @@ async def upload_file(
                     return
 
             except Exception as e:
-                yield json.dumps({
+                yield dumps_safe({
                     "status": "error",
                     "message": "Erreur d'analyse des données tabulaires.",
                     "technical": str(e)
@@ -213,7 +220,7 @@ async def upload_file(
                 return
 
             # Étape 3 : Interprétation IA
-            yield json.dumps({
+            yield dumps_safe({
                 "status": "processing",
                 "step": 3,
                 "message": "Génération de l'interprétation intelligente par l'IA..."
@@ -226,7 +233,7 @@ async def upload_file(
                     with_interpretation=want_interpretation,
                 )
                 if result.get("status") == "error":
-                    yield json.dumps({
+                    yield dumps_safe({
                         "status": "error",
                         "message": "Une erreur est survenue lors de l'analyse des données.",
                         "technical": result.get("message", "Unknown error in analysis")
@@ -234,7 +241,7 @@ async def upload_file(
                     return
 
                 # Étape 4 : Initialisation de la session
-                yield json.dumps({
+                yield dumps_safe({
                     "status": "processing",
                     "step": 4,
                     "message": "Finalisation et initialisation de la session..."
@@ -249,7 +256,7 @@ async def upload_file(
                         attach_to_session, file_bytes, filename,
                         result["profile"], result["stats"], name=filename,
                     )
-                    yield json.dumps({
+                    yield dumps_safe({
                         "status": "completed",
                         "data": {
                             "type": "dataset_added",
@@ -287,7 +294,7 @@ async def upload_file(
                 # L'ancien dashboard HTML n'est plus généré ici.
                 # Il sera généré à la volée en JSON par /api/dashboard/data/{session_id}
 
-                yield json.dumps({
+                yield dumps_safe({
                     "status": "completed",
                     "data": {
                         "type": "tabular_analyzed",
@@ -299,7 +306,7 @@ async def upload_file(
                     }
                 }) + "\n"
             except Exception as e:
-                yield json.dumps({
+                yield dumps_safe({
                     "status": "error",
                     "message": "Erreur lors du traitement IA ou de la création de session.",
                     "technical": str(e)
@@ -312,7 +319,7 @@ async def upload_file(
             from app.services.session_service import set_session_type
 
             # Étape 2 : Découpage et Indexation
-            yield json.dumps({
+            yield dumps_safe({
                 "status": "processing",
                 "step": 2,
                 "message": "Découpage et indexation vectorielle du document..."
@@ -329,7 +336,7 @@ async def upload_file(
                 else:
                     chunks_indexed = 0
             except Exception as e:
-                yield json.dumps({
+                yield dumps_safe({
                     "status": "error",
                     "message": "Erreur lors de l'indexation du document.",
                     "technical": str(e)
@@ -353,7 +360,7 @@ async def upload_file(
                     pass  # Le résumé du document reste utile même si le dataset secondaire échoue.
 
             # Étape 3 : Analyse et résumé IA
-            yield json.dumps({
+            yield dumps_safe({
                 "status": "processing",
                 "step": 3,
                 "message": "Analyse et génération du résumé par l'IA..."
@@ -372,7 +379,7 @@ async def upload_file(
 
                 if not raw_context.strip():
                     if Path(filename).suffix.lower() != ".pdf":
-                        yield json.dumps({
+                        yield dumps_safe({
                             "status": "error",
                             "message": "Ce document ne contient aucun texte lisible.",
                             "technical": f"Empty document: {filename}",
@@ -384,7 +391,7 @@ async def upload_file(
                     # document redevient un document texte ordinaire, exploitable par
                     # n'importe quel modèle (y compris un LLM local), avec citations
                     # RAG et extraction de tableau.
-                    yield json.dumps({
+                    yield dumps_safe({
                         "status": "processing",
                         "step": 3,
                         "message": "Document scanné détecté — reconnaissance de texte (OCR) en cours..."
@@ -474,14 +481,14 @@ async def upload_file(
                     titre = Path(filename).stem or filename
                     rename_session(session_id, titre)
 
-                    yield json.dumps({
+                    yield dumps_safe({
                         "status": "processing",
                         "step": 4,
                         "message": "Finalisation et initialisation de la session..."
                     }) + "\n"
                     await asyncio.sleep(0.05)
 
-                    yield json.dumps({
+                    yield dumps_safe({
                         "status": "completed",
                         "data": {
                             "type": "document_analyzed",
@@ -526,14 +533,14 @@ async def upload_file(
                 rename_session(session_id, titre)
 
                 # Étape 4 : Finalisation de la session
-                yield json.dumps({
+                yield dumps_safe({
                     "status": "processing",
                     "step": 4,
                     "message": "Finalisation et initialisation de la session..."
                 }) + "\n"
                 await asyncio.sleep(0.05)
 
-                yield json.dumps({
+                yield dumps_safe({
                     "status": "completed",
                     "data": {
                         "type": "document_analyzed",
@@ -546,7 +553,7 @@ async def upload_file(
                     }
                 }) + "\n"
             except Exception as e:
-                yield json.dumps({
+                yield dumps_safe({
                     "status": "error",
                     "message": "Erreur lors de la génération du résumé par l'IA.",
                     "technical": str(e)
