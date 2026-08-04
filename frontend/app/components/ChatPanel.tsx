@@ -646,7 +646,9 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
 
   const send = async () => {
     const userMsg = input.trim();
-    if (!userMsg) return;
+    // Le champ reste saisissable en permanence : la condition d'envoi ne peut
+    // plus reposer sur le seul attribut `disabled` du bouton.
+    if (!userMsg || !sessionId || loading) return;
     setInput("");
     await sendMessage(userMsg);
   };
@@ -1152,7 +1154,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                 setInput("");
                 sendMessage(userMsg);
               }}
-              disabled={!sessionId || loading}
+              submitDisabled={!sessionId || loading}
             />
 
             {/* Source chip */}

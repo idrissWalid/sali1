@@ -687,8 +687,10 @@ export default function DashboardPage() {
                     onChange={(event) => setChartQuestion(event.target.value)}
                     placeholder={`Ex. : Que signifie cette distribution pour « ${selectedVar} » ?`}
                     maxLength={1000}
-                    disabled={!selectedVar || questionLoading}
-                    className="h-10 min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3.5 text-sm leading-5 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:bg-[#181818] dark:focus:border-blue-600 dark:focus:ring-blue-950"
+                    // Jamais verrouillé : on doit pouvoir préparer sa question
+                    // pendant qu'une analyse tourne. Seul le bouton d'envoi
+                    // ci-dessous attend, et le formulaire refuse l'envoi.
+                    className="h-10 min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3.5 text-sm leading-5 outline-none transition placeholder:text-gray-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 dark:border-gray-700 dark:bg-[#181818] dark:focus:border-blue-600 dark:focus:ring-blue-950"
                   />
                   <button
                     type="submit"

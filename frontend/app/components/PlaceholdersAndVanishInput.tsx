@@ -9,7 +9,10 @@ interface Props {
   value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onSubmit: () => void;
-  disabled?: boolean;
+  /** Bloque l'ENVOI seulement. Le champ reste toujours saisissable : on doit
+   *  pouvoir écrire sa question pendant qu'une réponse arrive, quitte à ne
+   *  l'envoyer qu'ensuite. */
+  submitDisabled?: boolean;
   className?: string;
 }
 
@@ -18,7 +21,7 @@ export function PlaceholdersAndVanishInput({
   value,
   onChange,
   onSubmit,
-  disabled = false,
+  submitDisabled = false,
   className,
 }: Props) {
   const [currentPlaceholder, setCurrentPlaceholder] = useState(0);
@@ -91,7 +94,12 @@ export function PlaceholdersAndVanishInput({
     }));
   }, [value]);
 
-  useEffect(() => { draw(); }, [value, draw]);
+  // Pas de redessin pendant la disparition : le champ vient d'être vidé par le
+  // parent, redessiner effacerait les particules en cours d'animation.
+  useEffect(() => {
+    if (animating) return;
+    draw();
+  }, [value, draw, animating]);
 
   const animate = (start: number) => {
     const animateFrame = (pos: number = 0) => {
@@ -134,14 +142,16 @@ export function PlaceholdersAndVanishInput({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter" && !e.shiftKey && !animating && !disabled) {
+    // Entrée est ignorée quand l'envoi est verrouillé, mais la touche n'empêche
+    // rien d'autre : le reste de la frappe passe normalement.
+    if (e.key === "Enter" && !e.shiftKey && !animating && !submitDisabled) {
       e.preventDefault();
       vanishAndSubmit();
     }
   };
 
   const vanishAndSubmit = () => {
-    if (!value.trim() || disabled) return;
+    if (!value.trim() || submitDisabled) return;
     setAnimating(true);
     draw();
     const maxX = newDataRef.current.reduce(
@@ -167,9 +177,19 @@ export function PlaceholdersAndVanishInput({
         ref={inputRef}
         type="text"
         value={value}
-        onChange={(e) => { if (!animating) onChange(e); }}
+        onChange={(e) => {
+          // Taper pendant la disparition l'interrompt, au lieu d'avaler la
+          // frappe : le texte serait invisible (rendu transparent) et perdu.
+          if (animating) {
+            setAnimating(false);
+            newDataRef.current = [];
+          }
+          onChange(e);
+        }}
         onKeyDown={handleKeyDown}
-        disabled={disabled}
+        // Jamais `disabled` : seul l'envoi se verrouille. Un champ grisé
+        // pendant qu'une réponse arrive oblige à attendre pour écrire la
+        // question suivante, et fait perdre ce qu'on était en train de taper.
         className={cn(
           "h-11 w-full bg-transparent border-none py-0 text-[15px] leading-5 outline-none transition-colors duration-200 focus:outline-none focus:ring-0",
           animating ? "text-transparent" : ""
