@@ -33,12 +33,17 @@ FORMATS = {
 class ReportRequest(BaseModel):
     session_id: str
     title: str = "Rapport d'analyse de données"
-    institution: str = "CITADEL — Ouagadougou, Burkina Faso"
+    # Conservé pour les anciens clients, mais l'identité institutionnelle n'est
+    # plus imprimée automatiquement dans les livrables.
+    institution: str = ""
     format: str = "pdf"  # "pdf", "word" ou "powerpoint"
     # Consigne libre saisie dans la modale « Générer un rapport ». Champ à part
     # entière : concaténée au titre, elle n'orientait pas la rédaction et
     # s'imprimait sur la page de garde.
     key_points: str = ""
+    # Data URL ou contenu base64 d'un PNG/JPEG facultatif. Le service le valide,
+    # le normalise et ne l'utilise que sur la couverture.
+    logo_b64: str | None = None
     model: str | None = None  # modèle LLM ; à défaut, le modèle par défaut de l'instance
 
 @router.post("/report")
@@ -70,6 +75,7 @@ async def generate_report(request: ReportRequest):
             profile=data.get("profile", {}),
             stats=data.get("stats", {}),
             models=data.get("models", []),
+            logo_b64=request.logo_b64,
         )
     except Exception as exc:
         # Un échec du modèle produisait jusqu'ici un rapport de remplissage,

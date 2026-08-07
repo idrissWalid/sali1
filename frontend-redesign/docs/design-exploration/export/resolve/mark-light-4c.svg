@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+<g stroke="#1d1f20" stroke-width="7" opacity=".4" class="sali-raw">
+    <path d="M4 16 H30 M40 16 H58 M68 16 H92"></path>
+    <path d="M4 36 H20 M30 36 H74"></path>
+    <path d="M4 56 H46 M56 56 H68 M78 56 H92"></path>
+  </g>
+  <path d="M4 80 H92" stroke="#b68235" stroke-width="11" class="sali-signal"></path>
+</svg>

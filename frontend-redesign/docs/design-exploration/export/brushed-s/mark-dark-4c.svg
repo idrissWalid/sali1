@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96" fill="none" role="img" aria-label="SALI AI">
+<defs>
+    <linearGradient id="salaM" x1="20" y1="10" x2="76" y2="86" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#efe0bd"></stop><stop offset=".42" stop-color="#b68235"></stop>
+      <stop offset=".62" stop-color="#7d5a20"></stop><stop offset="1" stop-color="#e3d5b4"></stop>
+    </linearGradient>
+    <linearGradient id="salaB" x1="60" y1="14" x2="84" y2="80" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e3e3e3" stop-opacity=".55"></stop><stop offset="1" stop-color="#e3e3e3" stop-opacity=".22"></stop>
+    </linearGradient>
+    <linearGradient id="salaS" x1="0" y1="0" x2="96" y2="96" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"></stop><stop offset=".5" stop-color="#fff" stop-opacity=".55"></stop><stop offset="1" stop-color="#fff" stop-opacity="0"></stop>
+    </linearGradient>
+    <clipPath id="salaC"><path d="M74 20 C62 12 40 16 40 32 C40 44 68 50 68 66 C68 84 34 86 22 76 C36 82 58 78 58 66 C58 54 30 48 30 32 C30 14 60 12 74 20 Z"></path></clipPath>
+  </defs>
+  <circle cx="48" cy="48" r="43" stroke="#e3e3e3" stroke-width="1.6" opacity=".45" fill="none"></circle>
+  <path d="M60 13 C84 26 89 60 66 81 C80 58 77 31 60 13 Z" fill="url(#salaB)" class="sali-blade"></path>
+  <path d="M74 20 C62 12 40 16 40 32 C40 44 68 50 68 66 C68 84 34 86 22 76 C36 82 58 78 58 66 C58 54 30 48 30 32 C30 14 60 12 74 20 Z" fill="url(#salaM)"></path>
+  <g clip-path="url(#salaC)"><rect x="-96" y="0" width="96" height="96" fill="url(#salaS)" class="sali-sheen"></rect></g>
+</svg>

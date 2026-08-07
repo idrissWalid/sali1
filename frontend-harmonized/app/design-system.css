@@ -1,0 +1,425 @@
+/*
+ * SALI AI — harmonized current direction
+ * Keeps the graphite/lavender product style while aligning every route,
+ * chart and interactive control to the same semantic tokens.
+ */
+
+:root {
+  /* 1. Primitives retained from the current interface */
+  --graphite-950: #080a0f;
+  --graphite-900: #121212;
+  --graphite-850: #191c23;
+  --graphite-800: #20242d;
+  --lavender-300: #b8c3ff;
+  --lavender-400: #a7b5ff;
+  --lavender-500: #8495ff;
+  --white-50: #fafafa;
+  --white-100: #f1f3f8;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+
+  /* 2. Semantic alignment */
+  --surface-soft: var(--graphite-800);
+  --action-primary: var(--lavender-400);
+  --action-primary-hover: var(--lavender-300);
+  --action-primary-foreground: var(--graphite-950);
+  --focus-ring: var(--lavender-300);
+  --sali-header-chip: #f9f4ed;
+  --sali-header-mark: #7a8a5e;
+
+  /* Existing accessible chart palette becomes the sole chart source. */
+  --viz-surface: var(--surface-raised);
+  --viz-context: #7e879c;
+
+  /* shadcn/Tailwind bridge */
+  --background: var(--bg-app);
+  --foreground: var(--text-main);
+  --card: var(--surface-raised);
+  --card-foreground: var(--text-main);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--text-main);
+  --primary: var(--action-primary);
+  --primary-foreground: var(--action-primary-foreground);
+  --secondary: var(--surface-soft);
+  --secondary-foreground: var(--text-main);
+  --muted: var(--surface-soft);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--accent-soft);
+  --accent-foreground: var(--text-main);
+  --border: var(--border-color);
+  --input: var(--border-color);
+  --ring: var(--focus-ring);
+
+  /* 3. Component contracts */
+  --control-height: 44px;
+  --control-radius: 10px;
+  --control-padding-x: 14px;
+  --card-radius: 16px;
+  --card-bg: var(--surface-raised);
+  --card-border: var(--border-color);
+  --button-bg: var(--action-primary);
+  --button-fg: var(--action-primary-foreground);
+  --button-hover-bg: var(--action-primary-hover);
+
+  /* One product family plus the brand face; legacy aliases stay compatible. */
+  --font-google-sans: var(--font-figtree);
+  --font-roboto: var(--font-figtree);
+  --font-roboto-mono: ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+
+[data-theme="light"] {
+  --surface-soft: #f3f3f5;
+  --action-primary: #18181b;
+  --action-primary-hover: #303036;
+  --action-primary-foreground: #ffffff;
+  --focus-ring: #4f5f9f;
+  --sali-header-chip: #201e1d;
+  --sali-header-mark: #f5ead8;
+  --viz-context: #71717a;
+
+  --background: var(--bg-app);
+  --foreground: var(--text-main);
+  --card: var(--surface-raised);
+  --card-foreground: var(--text-main);
+  --popover: var(--surface-raised);
+  --popover-foreground: var(--text-main);
+  --primary: var(--action-primary);
+  --primary-foreground: var(--action-primary-foreground);
+  --secondary: var(--surface-soft);
+  --secondary-foreground: var(--text-main);
+  --muted: var(--surface-soft);
+  --muted-foreground: var(--text-muted);
+  --accent: var(--accent-soft);
+  --accent-foreground: var(--text-main);
+  --border: var(--border-color);
+  --input: var(--border-color);
+  --ring: var(--focus-ring);
+}
+
+/* Brand integration follows the existing identity guide. */
+.sali-brand__chip {
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: var(--sali-header-chip);
+}
+
+.sali-brand__name {
+  letter-spacing: -0.02em;
+}
+
+/* Shared component geometry */
+.workspace-panel > div,
+.workspace-panel--chat > .chat-panel,
+.workspace-panel--studio > .studio-panel {
+  border-color: var(--card-border) !important;
+  background: var(--surface-panel) !important;
+  box-shadow: var(--shadow-panel);
+}
+
+.panel-toggle,
+.source-history-dock,
+.modal-content {
+  border-color: var(--card-border);
+  background: var(--surface-raised);
+}
+
+.source-history-dock__item--active {
+  color: var(--action-primary-foreground);
+  background: var(--action-primary);
+}
+
+/* Text buttons grow instead of trapping their labels against the frame. */
+button {
+  line-height: 1.25;
+}
+
+button > span {
+  min-width: 0;
+}
+
+.app-topbar__action,
+.dashboard-secondary-action,
+.settings-cancel-button,
+.settings-save-button,
+.settings-danger-button,
+.settings-secondary-button,
+.studio-panel button:not(.icon-button),
+.dashboard-shell button:not(.dashboard-icon-action),
+.modal-content button:not(.api-key-visibility):not(.modal-content__close) {
+  min-height: var(--control-height);
+  height: auto;
+  padding-block: 10px;
+  padding-inline: var(--control-padding-x);
+  border-radius: var(--control-radius);
+  line-height: 1.25;
+  white-space: normal;
+  text-wrap: balance;
+}
+
+.app-topbar__action {
+  min-height: 42px !important;
+}
+
+.dashboard-shell button.h-10,
+.dashboard-shell button[class*="py-2"] {
+  height: auto !important;
+  min-height: var(--control-height);
+  padding-block: 10px !important;
+}
+
+.settings-save-button,
+.dashboard-shell button[class*="bg-blue"],
+.studio-panel button[style*="var(--accent-color)"] {
+  border-color: var(--button-bg) !important;
+  background: var(--button-bg) !important;
+  color: var(--button-fg) !important;
+}
+
+.settings-save-button:hover,
+.dashboard-shell button[class*="bg-blue"]:hover,
+.studio-panel button[style*="var(--accent-color)"]:hover {
+  background: var(--button-hover-bg) !important;
+}
+
+/* Dashboard now consumes the application surfaces and text hierarchy. */
+.dashboard-shell {
+  background:
+    radial-gradient(circle at 50% -22%, rgba(100, 118, 255, 0.11), transparent 30%),
+    var(--surface-app) !important;
+  color: var(--text-main) !important;
+}
+
+.dashboard-container {
+  width: min(100%, 1600px) !important;
+}
+
+.dashboard-header {
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-muted);
+}
+
+.dashboard-header h1 {
+  color: var(--text-main);
+  letter-spacing: -0.04em !important;
+}
+
+.dashboard-panel,
+.dashboard-stat,
+.ts-card,
+.sv-card {
+  border-color: var(--card-border) !important;
+  border-radius: var(--card-radius) !important;
+  background: var(--card-bg) !important;
+  color: var(--text-main) !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08) !important;
+}
+
+[data-theme="light"] .dashboard-panel,
+[data-theme="light"] .dashboard-stat,
+[data-theme="light"] .ts-card,
+[data-theme="light"] .sv-card {
+  box-shadow: 0 10px 28px rgba(30, 35, 55, 0.055) !important;
+}
+
+.dashboard-stat > div:first-child {
+  color: var(--accent-color) !important;
+  background: var(--accent-soft) !important;
+}
+
+.dashboard-shell .text-blue-400,
+.dashboard-shell .text-blue-500,
+.dashboard-shell .text-blue-600,
+.dashboard-shell .text-blue-700 {
+  color: var(--accent-color) !important;
+}
+
+.dashboard-shell .bg-blue-500,
+.dashboard-shell .bg-blue-600,
+.dashboard-shell .bg-blue-700 {
+  background: var(--action-primary) !important;
+  color: var(--action-primary-foreground) !important;
+}
+
+.dashboard-shell .border-blue-100,
+.dashboard-shell .border-blue-200,
+.dashboard-shell .border-blue-900,
+.dashboard-shell .border-blue-950 {
+  border-color: color-mix(in srgb, var(--accent-color) 28%, transparent) !important;
+}
+
+.dashboard-shell .bg-blue-50,
+.dashboard-shell .bg-blue-50\/40,
+.dashboard-shell .bg-blue-50\/50,
+.dashboard-shell .dark\:bg-blue-500\/5,
+.dashboard-shell .dark\:bg-blue-500\/10 {
+  background: var(--accent-soft) !important;
+}
+
+.dashboard-shell .bg-white,
+.dashboard-shell .dark\:bg-\[\#1a1a1a\],
+.dashboard-shell .dark\:bg-\[\#202020\],
+.dashboard-shell .dark\:bg-\[\#222\] {
+  background: var(--surface-raised) !important;
+}
+
+.dashboard-shell .bg-gray-50,
+.dashboard-shell .bg-gray-100,
+.dashboard-shell .dark\:bg-gray-800,
+.dashboard-shell .dark\:bg-\[\#181818\] {
+  background: var(--surface-soft) !important;
+}
+
+.dashboard-shell .text-gray-900,
+.dashboard-shell .dark\:text-gray-100,
+.dashboard-shell .dark\:text-gray-200,
+.dashboard-shell .dark\:text-gray-300 {
+  color: var(--text-main) !important;
+}
+
+.dashboard-shell .text-gray-400,
+.dashboard-shell .text-gray-500,
+.dashboard-shell .text-gray-600,
+.dashboard-shell .text-gray-700,
+.dashboard-shell .dark\:text-gray-400 {
+  color: var(--text-muted) !important;
+}
+
+.dashboard-shell .border-gray-100,
+.dashboard-shell .border-gray-200,
+.dashboard-shell .border-gray-700,
+.dashboard-shell .border-gray-800 {
+  border-color: var(--border-color) !important;
+}
+
+.performance-hero {
+  border-color: color-mix(in srgb, var(--accent-color) 30%, transparent) !important;
+  background:
+    radial-gradient(circle at 82% 12%, rgba(167, 181, 255, 0.35), transparent 32%),
+    linear-gradient(126deg, #182250, #293a84 54%, #564aa1) !important;
+  box-shadow: 0 20px 48px rgba(70, 84, 175, 0.16) !important;
+}
+
+.dashboard-search,
+.dashboard-secondary-action {
+  border-color: var(--border-color);
+  background: var(--surface-raised);
+}
+
+@media (max-width: 640px) {
+  .dashboard-header > div:last-child {
+    display: flex;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .dashboard-header > div:last-child button:not(.dashboard-icon-action) {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 390px) {
+  .sali-brand__name {
+    display: none;
+  }
+
+  .settings-footer,
+  .dashboard-header > div:last-child {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-footer > button,
+  .dashboard-header > div:last-child > button {
+    width: 100%;
+  }
+}
+
+/* Mobile containment: resizable panels must never keep a desktop min-content width. */
+@media (max-width: 1023px) {
+  .app-shell,
+  .app-topbar,
+  .mobile-workspace-nav,
+  .app-workspace,
+  .workspace-panels,
+  .workspace-panel,
+  .chat-panel,
+  .chat-panel-body,
+  .chat-composer,
+  .chat-input-bar {
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    box-sizing: border-box;
+  }
+
+  .app-shell {
+    max-width: 100vw !important;
+  }
+
+  .app-topbar > div:last-child,
+  .app-topbar__actions,
+  .mobile-workspace-nav button {
+    min-width: 0;
+  }
+
+  .app-workspace {
+    align-items: stretch !important;
+  }
+
+  .workspace-panels,
+  .workspace-panel.is-mobile-active,
+  .workspace-panel--chat > .chat-panel {
+    height: 100% !important;
+    max-height: 100% !important;
+  }
+
+  /* react-resizable-panels wraps our classed panel in a data-panel element. */
+  .workspace-panels > [data-panel="true"] {
+    display: none !important;
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: 100% !important;
+    overflow: hidden !important;
+  }
+
+  .workspace-panels > [data-panel="true"]:has(> .workspace-panel.is-mobile-active) {
+    display: flex !important;
+    flex: 1 1 auto !important;
+  }
+
+  .chat-messages.chat-messages--empty {
+    height: 0 !important;
+    flex: 1 1 0 !important;
+    overflow: hidden !important;
+  }
+
+  .chat-messages--empty .welcome-panel {
+    height: 100%;
+    min-height: 0;
+    place-items: start center;
+    overflow-y: auto;
+  }
+
+  .chat-input-bar > :first-child {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-topbar > div:last-child {
+    gap: 4px !important;
+  }
+
+  .mobile-workspace-nav button {
+    gap: 5px;
+    padding-inline: 6px;
+  }
+}

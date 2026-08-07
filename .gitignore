@@ -23,6 +23,14 @@ fr_claude/.next/
 # dans frontend/, ces variantes n'ont pas vocation à vivre dans l'historique.
 /frontend-*/
 
+# Variantes produit conservées : contrairement aux explorations de logo, elles
+# doivent pouvoir être versionnées. Leurs .gitignore locaux excluent toujours
+# node_modules, .next et les autres artefacts de build.
+!/frontend-redesign/
+!/frontend-redesign/**
+!/frontend-harmonized/
+!/frontend-harmonized/**
+
 # Sortie du code généré : le pipeline de modélisation écrit `metrics.json` dans
 # son répertoire de travail, qui est backend/ quand l'exécution retombe en local
 # faute de Docker. C'est un résultat de run, pas une source.

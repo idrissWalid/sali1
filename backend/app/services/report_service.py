@@ -1,227 +1,431 @@
-import io
 import base64
+import html
+import io
 import json
 import logging
 import re
 from datetime import datetime
-from app.services.gemini_service import complete_text
-from app.core import config
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import cm
-from reportlab.lib.colors import HexColor
-from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer,
-    Image, HRFlowable, PageBreak
-)
-from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY, TA_RIGHT
-from docx import Document
-from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from pptx import Presentation
-from pptx.util import Inches as PptxInches, Pt as PptxPt, Emu
-from pptx.dml.color import RGBColor as PptxRGB
-from pptx.enum.text import PP_ALIGN
-from pptx.enum.shapes import MSO_SHAPE
 
-PRIMARY = HexColor("#1a73e8")
-DARK = HexColor("#202124")   # titres
-GRAY = HexColor("#5f6368")   # sous-titres, légendes, filets — même gris que l'export Word
+from PIL import Image as PILImage
+from app.core import config
+from app.services.gemini_service import complete_text
+from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Inches, Pt, RGBColor
+from pptx import Presentation
+from pptx.dml.color import RGBColor as PptxRGB
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.util import Emu, Inches as PptxInches, Pt as PptxPt
+from reportlab.lib.colors import HexColor
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import cm
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import (
+    HRFlowable,
+    Image,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 logger = logging.getLogger(__name__)
 
-# Sections attendues du rapport, dans l'ordre de rendu. Sert à la fois de contrat
-# avec le modèle et de garde-fou : une clé absente de sa réponse ne doit pas
-# faire échouer la génération.
-SECTIONS_RAPPORT = [
-    ("resume_executif", "Résumé exécutif"),
-    ("description_donnees", "Description du jeu de données"),
-    ("resultats", "Résultats analytiques"),
-    ("conclusions", "Conclusions"),
-    ("recommandations", "Recommandations"),
-]
+# Palette éditoriale Sali AI : chaleureuse, sobre et lisible à l'impression.
+SALI_OLIVE_HEX = "#667549"
+SALI_OLIVE_LIGHT_HEX = "#E8ECDF"
+SALI_ORANGE_HEX = "#C67139"
+SALI_INK_HEX = "#201E1D"
+SALI_MUTED_HEX = "#6F6A64"
+SALI_PAPER_HEX = "#F9F4ED"
+SALI_WHITE_HEX = "#FFFDFC"
+SALI_LINE_HEX = "#D8D0C5"
+
+SALI_OLIVE = HexColor(SALI_OLIVE_HEX)
+SALI_OLIVE_LIGHT = HexColor(SALI_OLIVE_LIGHT_HEX)
+SALI_ORANGE = HexColor(SALI_ORANGE_HEX)
+SALI_INK = HexColor(SALI_INK_HEX)
+SALI_MUTED = HexColor(SALI_MUTED_HEX)
+SALI_PAPER = HexColor(SALI_PAPER_HEX)
+SALI_WHITE = HexColor(SALI_WHITE_HEX)
+SALI_LINE = HexColor(SALI_LINE_HEX)
+
+PPTX_OLIVE = PptxRGB(0x66, 0x75, 0x49)
+PPTX_OLIVE_LIGHT = PptxRGB(0xE8, 0xEC, 0xDF)
+PPTX_ORANGE = PptxRGB(0xC6, 0x71, 0x39)
+PPTX_INK = PptxRGB(0x20, 0x1E, 0x1D)
+PPTX_MUTED = PptxRGB(0x6F, 0x6A, 0x64)
+PPTX_PAPER = PptxRGB(0xF9, 0xF4, 0xED)
+PPTX_WHITE = PptxRGB(0xFF, 0xFD, 0xFC)
+PPTX_LINE = PptxRGB(0xD8, 0xD0, 0xC5)
+
+MAX_LOGO_BYTES = 3 * 1024 * 1024
+MAX_INSIGHTS = 5
+MAX_RECOMMENDATIONS = 5
+
+
+def _clean_text(value) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"[ \t]+", " ", str(value)).strip()
+
+
+def _pdf_text(value) -> str:
+    return html.escape(_clean_text(value)).replace("\n", "<br/>")
+
+
+def _list_of_text(value, limit: int = 5) -> list[str]:
+    if isinstance(value, list):
+        values = value
+    elif isinstance(value, str):
+        values = [
+            re.sub(r"^\s*(?:[-•]|\d+[.)])\s*", "", line)
+            for line in value.splitlines()
+            if line.strip()
+        ]
+        if not values and value.strip():
+            values = [value]
+    elif value:
+        values = [value]
+    else:
+        values = []
+    return [_clean_text(item) for item in values if _clean_text(item)][:limit]
+
+
+def _normalise_report(raw: object, fallback_title: str) -> dict:
+    """Normalise la réponse LLM vers un contrat utile aux trois formats.
+
+    Le repli sur les anciennes clés permet de rester compatible avec une réponse
+    mise en cache ou un modèle qui n'aurait suivi que partiellement le schéma.
+    """
+    source = raw if isinstance(raw, dict) else {}
+
+    quality_raw = source.get("qualite_donnees") or source.get("description_donnees") or {}
+    if isinstance(quality_raw, dict):
+        quality = {
+            "synthese": _clean_text(quality_raw.get("synthese") or quality_raw.get("constat")),
+            "points_attention": _list_of_text(
+                quality_raw.get("points_attention") or quality_raw.get("limites"), 5
+            ),
+        }
+    else:
+        quality = {"synthese": _clean_text(quality_raw), "points_attention": []}
+
+    analyses_raw = source.get("analyses") or []
+    if not analyses_raw and source.get("resultats"):
+        analyses_raw = [{"titre": "Résultats principaux", "constat": source.get("resultats")}]
+    if isinstance(analyses_raw, dict):
+        analyses_raw = [analyses_raw]
+    if isinstance(analyses_raw, str):
+        analyses_raw = [{"titre": "Résultats principaux", "constat": analyses_raw}]
+
+    analyses = []
+    for item in analyses_raw if isinstance(analyses_raw, list) else []:
+        if isinstance(item, dict):
+            analyses.append({
+                "titre": _clean_text(item.get("titre") or "Analyse"),
+                "constat": _clean_text(item.get("constat") or item.get("analyse")),
+                "preuve": _clean_text(item.get("preuve") or item.get("chiffre_cle")),
+                "implication": _clean_text(item.get("implication") or item.get("impact")),
+            })
+        elif _clean_text(item):
+            analyses.append({
+                "titre": "Analyse",
+                "constat": _clean_text(item),
+                "preuve": "",
+                "implication": "",
+            })
+    analyses = analyses[:MAX_INSIGHTS]
+
+    recommendations_raw = source.get("recommandations") or []
+    if isinstance(recommendations_raw, dict):
+        recommendations_raw = [recommendations_raw]
+    if isinstance(recommendations_raw, str):
+        recommendations_raw = _list_of_text(recommendations_raw, MAX_RECOMMENDATIONS)
+
+    recommendations = []
+    for item in recommendations_raw if isinstance(recommendations_raw, list) else []:
+        if isinstance(item, dict):
+            priority = _clean_text(item.get("priorite") or "À planifier").capitalize()
+            recommendations.append({
+                "priorite": priority,
+                "action": _clean_text(item.get("action") or item.get("titre")),
+                "justification": _clean_text(item.get("justification") or item.get("raison")),
+            })
+        elif _clean_text(item):
+            recommendations.append({
+                "priorite": "À planifier",
+                "action": _clean_text(item),
+                "justification": "",
+            })
+    recommendations = recommendations[:MAX_RECOMMENDATIONS]
+
+    summary = _clean_text(source.get("synthese") or source.get("resume_executif"))
+    key_messages = _list_of_text(source.get("messages_cles"), 4)
+    if not key_messages and source.get("conclusions"):
+        key_messages = _list_of_text(source.get("conclusions"), 4)
+
+    return {
+        "titre": _clean_text(source.get("titre")) or fallback_title,
+        "synthese": summary,
+        "messages_cles": key_messages,
+        "qualite_donnees": quality,
+        "analyses": analyses,
+        "recommandations": recommendations,
+        "limites": _list_of_text(source.get("limites"), 5),
+        "prochaines_etapes": _list_of_text(source.get("prochaines_etapes"), 5),
+    }
+
+
+def _decode_logo(logo_b64: str | None) -> bytes | None:
+    """Valide le logo et le normalise en PNG pour tous les moteurs d'export."""
+    if not logo_b64:
+        return None
+    payload = logo_b64.split(",", 1)[1] if "," in logo_b64 else logo_b64
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except Exception as exc:
+        raise ValueError("Le logo transmis n'est pas une image valide.") from exc
+    if not raw or len(raw) > MAX_LOGO_BYTES:
+        raise ValueError("Le logo doit peser moins de 3 Mo.")
+
+    try:
+        with PILImage.open(io.BytesIO(raw)) as image:
+            image.load()
+            image.thumbnail((1800, 1800))
+            if image.mode not in ("RGB", "RGBA"):
+                image = image.convert("RGBA")
+            output = io.BytesIO()
+            image.save(output, format="PNG", optimize=True)
+            return output.getvalue()
+    except Exception as exc:
+        raise ValueError("Le format du logo n'est pas pris en charge.") from exc
+
+
+def _logo_ratio(logo_bytes: bytes) -> float:
+    with PILImage.open(io.BytesIO(logo_bytes)) as image:
+        width, height = image.size
+    return width / max(height, 1)
+
+
+def _format_number(value) -> str:
+    if value is None or value == "":
+        return ""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return _clean_text(value)
+    if number.is_integer():
+        return f"{int(number):,}".replace(",", " ")
+    return f"{number:,.1f}".replace(",", " ").replace(".", ",")
+
+
+def _report_metrics(profile: dict | None, stats: dict | None) -> list[dict[str, str]]:
+    profile = profile or {}
+    overview = (stats or {}).get("dataset_overview", {}) or {}
+    rows = profile.get("rows", overview.get("n_lignes"))
+    columns = profile.get("columns", overview.get("n_variables"))
+    missing = overview.get("pct_valeurs_manquantes_total")
+    duplicates = overview.get("pct_doublons")
+
+    metrics = []
+    if rows is not None:
+        metrics.append({"label": "Observations", "value": _format_number(rows)})
+    if columns is not None:
+        metrics.append({"label": "Variables", "value": _format_number(columns)})
+    if missing is not None:
+        metrics.append({"label": "Valeurs manquantes", "value": f"{_format_number(missing)} %"})
+    if duplicates is not None:
+        metrics.append({"label": "Doublons", "value": f"{_format_number(duplicates)} %"})
+    return metrics[:4]
 
 
 def _bloc_faits(profile: dict, stats: dict, models: list) -> str:
-    """Chiffres vérifiables du jeu de données, mis en forme pour le prompt.
-
-    Sans ce bloc, le modèle ne dispose que de l'analyse initiale et du fil de
-    discussion : il y reprend des nombres de seconde main, déjà arrondis ou
-    reformulés, et en invente le reste. Les statistiques sont ici celles
-    calculées par ydata-profiling à l'ingestion — c'est la seule source du
-    rapport qui ne soit pas une paraphrase.
-    """
+    """Faits calculés transmis au LLM : seule source autorisée pour les nombres."""
     profile = profile or {}
     stats = stats or {}
-    overview = stats.get("dataset_overview", {})
-    variables = stats.get("variables", {})
+    overview = stats.get("dataset_overview", {}) or {}
+    variables = stats.get("variables", {}) or {}
 
-    lignes = [
-        "CHIFFRES DU JEU DE DONNÉES (source : profilage automatique — à reprendre tels quels)",
+    lines = [
+        "FAITS VÉRIFIÉS — reprendre les valeurs telles quelles",
         f"- Lignes : {profile.get('rows', overview.get('n_lignes', 'inconnu'))}",
         f"- Colonnes : {profile.get('columns', overview.get('n_variables', 'inconnu'))}",
     ]
     if profile.get("column_names"):
-        lignes.append(f"- Noms des colonnes : {', '.join(map(str, profile['column_names']))}")
+        lines.append(f"- Colonnes : {', '.join(map(str, profile['column_names']))}")
     if overview:
-        lignes.append(
-            f"- Doublons : {overview.get('n_doublons', 0)} ({overview.get('pct_doublons', 0)} %)"
-        )
-        lignes.append(
-            f"- Valeurs manquantes : {overview.get('n_valeurs_manquantes_total', 0)} "
-            f"({overview.get('pct_valeurs_manquantes_total', 0)} %)"
-        )
-        lignes.append(
-            f"- Variables numériques : {overview.get('n_variables_numeriques', 0)} · "
-            f"catégorielles : {overview.get('n_variables_categorielles', 0)}"
-        )
+        lines.extend([
+            f"- Doublons : {overview.get('n_doublons', 0)} ({overview.get('pct_doublons', 0)} %)",
+            "- Valeurs manquantes : "
+            f"{overview.get('n_valeurs_manquantes_total', 0)} "
+            f"({overview.get('pct_valeurs_manquantes_total', 0)} %)",
+            "- Variables numériques : "
+            f"{overview.get('n_variables_numeriques', 0)} ; catégorielles : "
+            f"{overview.get('n_variables_categorielles', 0)}",
+        ])
 
-    numeriques, categorielles = {}, {}
-    for col, s in (variables or {}).items():
-        if s.get("type") == "Numeric":
-            numeriques[col] = {
-                k: s[k] for k in
-                ("moyenne", "mediane", "ecart_type", "min", "max", "q1", "q3",
-                 "skewness", "n_manquantes", "n_valeurs_distinctes")
-                if k in s
-            }
-        elif s.get("type") in ("Categorical", "Boolean"):
-            categorielles[col] = {
-                k: s[k] for k in
-                ("n_valeurs_distinctes", "valeur_dominante", "frequence_dominante", "n_manquantes")
-                if k in s
-            }
+    compact_variables = {}
+    allowed = {
+        "type", "moyenne", "mediane", "ecart_type", "min", "max", "q1", "q3",
+        "skewness", "n_manquantes", "n_valeurs_distinctes", "valeur_dominante",
+        "frequence_dominante",
+    }
+    for column, values in variables.items():
+        if isinstance(values, dict):
+            compact_variables[column] = {key: values[key] for key in allowed if key in values}
+    if compact_variables:
+        lines.append("\nSTATISTIQUES PAR VARIABLE :")
+        lines.append(json.dumps(compact_variables, ensure_ascii=False, indent=2))
 
-    if numeriques:
-        lignes.append("\nSTATISTIQUES DES VARIABLES NUMÉRIQUES :")
-        lignes.append(json.dumps(numeriques, ensure_ascii=False, indent=2))
-    if categorielles:
-        lignes.append("\nSTATISTIQUES DES VARIABLES CATÉGORIELLES :")
-        lignes.append(json.dumps(categorielles, ensure_ascii=False, indent=2))
-
-    correlations = stats.get("correlations") or {}
-    if correlations:
-        lignes.append("\nCORRÉLATIONS :")
-        lignes.append(json.dumps(correlations, ensure_ascii=False, indent=2))
-
-    missing = stats.get("missing") or {}
-    if missing:
-        lignes.append("\nVALEURS MANQUANTES PAR COLONNE :")
-        lignes.append(json.dumps(missing, ensure_ascii=False, indent=2))
+    for label, key in (
+        ("CORRÉLATIONS", "correlations"),
+        ("VALEURS MANQUANTES PAR COLONNE", "missing"),
+    ):
+        value = stats.get(key)
+        if value:
+            lines.append(f"\n{label} :")
+            lines.append(json.dumps(value, ensure_ascii=False, indent=2))
 
     if models:
-        lignes.append("\nMODÈLES ENTRAÎNÉS DANS LA SESSION :")
-        for m in models:
-            features = ", ".join(map(str, m.get("features") or [])) or "non précisées"
-            lignes.append(
-                f"- « {m.get('name')} » (type : {m.get('type')}) · variables : {features}"
+        lines.append("\nMODÈLES ENTRAÎNÉS :")
+        for model in models:
+            features = ", ".join(map(str, model.get("features") or [])) or "non précisées"
+            lines.append(
+                f"- {model.get('name')} — type : {model.get('type')} ; variables : {features}"
             )
-            if m.get("metrics"):
-                lignes.append(f"  métriques : {json.dumps(m['metrics'], ensure_ascii=False)}")
+            if model.get("metrics"):
+                lines.append(f"  métriques : {json.dumps(model['metrics'], ensure_ascii=False)}")
+    return "\n".join(lines)
 
-    return "\n".join(lignes)
 
-
-# ── Rédaction du rapport par le LLM ────────────────────────────
 def draft_report_with_llm(
     filename: str,
     analysis_text: str,
     chat_history: list,
     title: str,
-    institution: str,
+    institution: str = "",
     model: str | None = None,
     key_points: str = "",
     profile: dict | None = None,
     stats: dict | None = None,
     models: list | None = None,
 ) -> dict:
-    """
-    Demande au modèle de rédiger un rapport structuré à partir des éléments
-    de la session, ancré sur les statistiques réelles du jeu de données.
-    Retourne un dict avec les sections du rapport.
-    """
+    """Rédige un contenu décisionnel commun, ensuite adapté au document ou au deck."""
+    del institution  # Conservé dans l'API pour compatibilité, jamais injecté dans l'export.
     model = model or config.get_default_model()
-    history_summary = "\n".join([
-        f"[{m['role'].upper()}] {m['text'][:500]}"
-        for m in chat_history
-    ])
-
-    # Les points clés dictés par l'utilisateur passent avant le reste : c'est la
-    # seule consigne du rapport qui vienne de quelqu'un qui connaît le contexte
-    # métier, que ni les statistiques ni le fil de discussion ne portent.
-    bloc_consigne = ""
+    history_summary = "\n".join(
+        f"[{message.get('role', '').upper()}] {_clean_text(message.get('text'))[:700]}"
+        for message in chat_history
+        if isinstance(message, dict)
+    )
+    commissioner = ""
     if key_points.strip():
-        bloc_consigne = f"""
-CONSIGNE PRIORITAIRE DU COMMANDITAIRE :
+        commissioner = f"""
+DEMANDE PRIORITAIRE DU COMMANDITAIRE :
 {key_points.strip()}
 
-Structure le rapport autour de cette demande : elle décide de ce qui est
-développé et de ce qui reste accessoire. Si les données ne permettent pas d'y
-répondre, dis-le explicitement dans les résultats plutôt que de la contourner.
+Cette demande détermine l'angle du rapport. Si les données n'y répondent pas,
+signale explicitement la limite au lieu de la contourner.
 """
 
     prompt = f"""
-Tu es un expert en rédaction de rapports analytiques institutionnels.
+Tu es analyste senior et rédacteur de livrables de décision.
 
-Voici les éléments d'une session d'analyse de données :
-
-FICHIER ANALYSÉ : {filename}
-TITRE DU RAPPORT : {title}
-INSTITUTION : {institution}
-{bloc_consigne}
+SOURCE ANALYSÉE : {filename}
+TITRE DE REPLI : {title}
+{commissioner}
 {_bloc_faits(profile or {}, stats or {}, models or [])}
 
 ANALYSE INITIALE :
 {analysis_text}
 
-ÉCHANGES DE LA SESSION :
+ÉCHANGES UTILES DE LA SESSION :
 {history_summary}
 
-Rédige un rapport analytique complet, structuré et professionnel, directement
-publiable dans un contexte institutionnel.
+Produis un rapport en français, précis et directement exploitable par un décideur.
+Sépare toujours un fait observé de son interprétation. Chaque nombre doit venir
+du bloc FAITS VÉRIFIÉS. N'invente ni causalité, ni période, ni objectif métier.
+Privilégie les conclusions spécifiques à la source aux formulations génériques.
 
-Règles de rédaction :
-- Appuie chaque affirmation quantitative sur un chiffre du bloc ci-dessus, cité tel quel.
-- N'invente aucune donnée : si une information manque, écris-le au lieu de l'estimer.
-- Écris en texte brut, sans markdown (pas de **, #, ni de listes à puces).
-- Rédige en français, en paragraphes suivis.
-
-Retourne EXACTEMENT ce format JSON (sans markdown) :
+Retourne EXCLUSIVEMENT ce JSON valide, sans markdown :
 {{
-  "resume_executif": "3 à 5 phrases résumant les conclusions principales",
-  "description_donnees": "Description complète du jeu de données : variables, dimensions, qualité, période couverte",
-  "resultats": "Section principale des résultats analytiques, bien structurée en paragraphes. Minimum 200 mots.",
-  "conclusions": "Conclusions clés et implications pratiques pour l'institution",
-  "recommandations": "3 à 5 recommandations concrètes et actionnables numérotées"
+  "titre": "titre spécifique de 6 à 12 mots",
+  "synthese": "80 à 120 mots : réponse directe, portée et enjeu principal",
+  "messages_cles": ["3 ou 4 messages autonomes, chacun en 20 mots maximum"],
+  "qualite_donnees": {{
+    "synthese": "qualité, couverture et aptitude à l'analyse en 80 mots maximum",
+    "points_attention": ["limites de qualité réellement observées"]
+  }},
+  "analyses": [
+    {{
+      "titre": "conclusion analytique formulée comme un message",
+      "constat": "ce qui est observé",
+      "preuve": "le ou les chiffres vérifiés qui l'étayent",
+      "implication": "ce que cela change pour la décision, sans inventer le contexte"
+    }}
+  ],
+  "recommandations": [
+    {{
+      "priorite": "Haute, Moyenne ou À surveiller",
+      "action": "action concrète et vérifiable",
+      "justification": "lien explicite avec un constat"
+    }}
+  ],
+  "limites": ["ce que les données ou la méthode ne permettent pas d'affirmer"],
+  "prochaines_etapes": ["étape réaliste permettant d'approfondir ou de décider"]
 }}
+
+Contraintes : 3 à 5 analyses, 3 à 5 recommandations, aucune section de remplissage.
 """
     text = complete_text(prompt, model).strip()
-
-    # Nettoyer les backticks si présents
     if text.startswith("```"):
-        lignes = text.split("\n")
-        text = "\n".join(lignes[1:-1] if lignes[-1].strip().startswith("```") else lignes[1:])
-
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:])
     try:
-        sections = json.loads(text)
+        raw = json.loads(text)
     except json.JSONDecodeError:
-        # Le modèle a parlé mais pas en JSON : le texte reste exploitable comme
-        # corps de rapport, alors qu'un échec ici perdrait tout l'appel.
         logger.warning("Rapport : réponse non-JSON du modèle %s, repli sur le texte brut.", model)
-        sections = {"resultats": text}
-
-    if not isinstance(sections, dict):
-        sections = {"resultats": str(sections)}
-
-    # Une section absente devient une mention explicite : mieux vaut un rapport
-    # qui signale son trou qu'un KeyError au moment du rendu.
-    return {
-        cle: str(sections.get(cle) or "").strip() or "Section non renseignée par le modèle."
-        for cle, _ in SECTIONS_RAPPORT
-    }
+        raw = {"synthese": text}
+    return _normalise_report(raw, title)
 
 
-# ── Génération PDF ──────────────────────────────────────────────
+def _fit_dimensions(width: float, height: float, max_width: float, max_height: float) -> tuple[float, float]:
+    ratio = min(max_width / max(width, 1), max_height / max(height, 1))
+    return width * ratio, height * ratio
+
+
+def _image_dimensions(raw: bytes, max_width: float, max_height: float) -> tuple[float, float]:
+    with PILImage.open(io.BytesIO(raw)) as image:
+        width, height = image.size
+    return _fit_dimensions(width, height, max_width, max_height)
+
+
+def _draft(
+    *, title, institution, filename, analysis_text, messages, model, key_points, profile, stats, models
+) -> dict:
+    return draft_report_with_llm(
+        filename=filename,
+        analysis_text=analysis_text,
+        chat_history=messages,
+        title=title,
+        institution=institution,
+        model=model,
+        key_points=key_points,
+        profile=profile,
+        stats=stats,
+        models=models,
+    )
+
+
 def build_pdf_report(
     title: str,
     institution: str,
@@ -234,112 +438,265 @@ def build_pdf_report(
     profile: dict | None = None,
     stats: dict | None = None,
     models: list | None = None,
+    logo_b64: str | None = None,
 ) -> bytes:
-    sections = draft_report_with_llm(
-        filename=filename,
-        analysis_text=analysis_text,
-        chat_history=messages,
-        title=title,
-        institution=institution,
-        model=model,
-        key_points=key_points,
-        profile=profile,
-        stats=stats,
-        models=models,
+    logo = _decode_logo(logo_b64)
+    report = _draft(
+        title=title, institution=institution, filename=filename,
+        analysis_text=analysis_text, messages=messages, model=model,
+        key_points=key_points, profile=profile, stats=stats, models=models,
     )
+    metrics = _report_metrics(profile, stats)
 
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=A4,
-        rightMargin=2.5*cm, leftMargin=2.5*cm,
-        topMargin=2.5*cm, bottomMargin=2.5*cm,
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=2.2 * cm,
+        leftMargin=2.2 * cm,
+        topMargin=2.0 * cm,
+        bottomMargin=1.8 * cm,
+        title=report["titre"],
+        author="Sali AI",
+    )
+    page_width, page_height = A4
+
+    title_style = ParagraphStyle(
+        "ReportTitle", fontName="Helvetica-Bold", fontSize=28, leading=33,
+        textColor=SALI_INK, alignment=TA_LEFT,
+    )
+    section_style = ParagraphStyle(
+        "Section", fontName="Helvetica-Bold", fontSize=17, leading=21,
+        textColor=SALI_OLIVE, spaceBefore=18, spaceAfter=9,
+    )
+    insight_style = ParagraphStyle(
+        "Insight", fontName="Helvetica-Bold", fontSize=12.5, leading=16,
+        textColor=SALI_INK, spaceBefore=12, spaceAfter=5,
+    )
+    body_style = ParagraphStyle(
+        "Body", fontName="Helvetica", fontSize=10.2, leading=15.5,
+        textColor=SALI_INK, spaceAfter=7,
+    )
+    muted_style = ParagraphStyle(
+        "Muted", fontName="Helvetica", fontSize=8.5, leading=11,
+        textColor=SALI_MUTED,
+    )
+    label_style = ParagraphStyle(
+        "Label", fontName="Helvetica-Bold", fontSize=8, leading=10,
+        textColor=SALI_ORANGE, spaceBefore=5, spaceAfter=2,
+    )
+    bullet_style = ParagraphStyle(
+        "Bullet", parent=body_style, leftIndent=14, firstLineIndent=-10,
+        bulletIndent=0, spaceAfter=5,
     )
 
-    style_title = ParagraphStyle("T", fontSize=22, fontName="Helvetica-Bold",
-                                  textColor=DARK, spaceAfter=6)
-    style_sub   = ParagraphStyle("S", fontSize=11, fontName="Helvetica",
-                                  textColor=GRAY, spaceAfter=4)
-    style_sec   = ParagraphStyle("SE", fontSize=13, fontName="Helvetica-Bold",
-                                  textColor=PRIMARY, spaceBefore=18, spaceAfter=8)
-    style_body  = ParagraphStyle("B", fontSize=10, fontName="Helvetica",
-                                  textColor=HexColor("#2d2d2d"), spaceAfter=6,
-                                  leading=16, alignment=TA_JUSTIFY)
-    style_cap   = ParagraphStyle("C", fontSize=8, fontName="Helvetica-Oblique",
-                                  textColor=GRAY, spaceAfter=8, alignment=TA_CENTER)
-    style_rec   = ParagraphStyle("R", fontSize=10, fontName="Helvetica",
-                                  textColor=HexColor("#2d2d2d"), spaceAfter=4,
-                                  leading=15, leftIndent=15)
+    def draw_cover(canvas, _doc):
+        canvas.saveState()
+        canvas.setFillColor(SALI_PAPER)
+        canvas.rect(0, 0, page_width, page_height, stroke=0, fill=1)
+        canvas.setFillColor(SALI_OLIVE)
+        canvas.rect(0, page_height - 0.35 * cm, page_width, 0.35 * cm, stroke=0, fill=1)
+        canvas.setFillColor(SALI_ORANGE)
+        canvas.circle(2.25 * cm, page_height - 2.1 * cm, 0.13 * cm, stroke=0, fill=1)
 
-    def add_section(elements, title, content):
-        elements.append(Paragraph(title, style_sec))
-        for line in content.split("\n"):
-            line = line.strip()
-            if line:
-                elements.append(Paragraph(line, style_body))
-            else:
-                elements.append(Spacer(1, 4))
+        if logo:
+            ratio = _logo_ratio(logo)
+            max_width, max_height = 4.0 * cm, 1.8 * cm
+            width, height = _fit_dimensions(ratio, 1, max_width, max_height)
+            canvas.drawImage(
+                ImageReader(io.BytesIO(logo)), page_width - 2.2 * cm - width,
+                page_height - 2.8 * cm, width=width, height=height,
+                preserveAspectRatio=True, mask="auto",
+            )
 
-    elements = []
+        canvas.setFillColor(SALI_OLIVE)
+        canvas.setFont("Helvetica-Bold", 9)
+        canvas.drawString(2.2 * cm, page_height - 2.3 * cm, "RAPPORT D'ANALYSE")
+        cover_title = Paragraph(_pdf_text(report["titre"]), title_style)
+        _, title_height = cover_title.wrap(page_width - 4.4 * cm, 7 * cm)
+        cover_title.drawOn(canvas, 2.2 * cm, page_height - 5.0 * cm - title_height)
 
-    # ── Page de garde ──────────────────────────────────────────
-    elements.append(Spacer(1, 2*cm))
-    elements.append(HRFlowable(width="100%", thickness=3, color=PRIMARY, spaceAfter=20))
-    elements.append(Paragraph(title, style_title))
-    elements.append(Spacer(1, 6))
-    elements.append(Paragraph(institution, style_sub))
-    elements.append(Spacer(1, 4))
-    elements.append(Paragraph(
-        f"Source analysée : {filename}", style_sub))
-    elements.append(Paragraph(
-        f"Date de génération : {datetime.now().strftime('%d %B %Y à %H:%M')}",
-        style_sub))
-    elements.append(HRFlowable(width="100%", thickness=1, color=GRAY, spaceAfter=20))
-    elements.append(PageBreak())
+        canvas.setStrokeColor(SALI_ORANGE)
+        canvas.setLineWidth(2.2)
+        canvas.line(2.2 * cm, page_height - 6.0 * cm - title_height, 5.2 * cm, page_height - 6.0 * cm - title_height)
+        canvas.setFillColor(SALI_MUTED)
+        canvas.setFont("Helvetica", 10)
+        source = _clean_text(filename) or "Source de la session"
+        canvas.drawString(2.2 * cm, 5.4 * cm, f"Source analysée · {source[:85]}")
+        canvas.drawString(2.2 * cm, 4.8 * cm, datetime.now().strftime("Édition du %d/%m/%Y"))
 
-    # ── Résumé exécutif ────────────────────────────────────────
-    add_section(elements, "Résumé exécutif", sections["resume_executif"])
+        canvas.setStrokeColor(SALI_LINE)
+        canvas.setLineWidth(0.7)
+        canvas.line(2.2 * cm, 2.0 * cm, page_width - 2.2 * cm, 2.0 * cm)
+        canvas.setFillColor(SALI_MUTED)
+        canvas.setFont("Helvetica", 8.5)
+        canvas.drawString(2.2 * cm, 1.45 * cm, "Généré par Sali AI")
+        canvas.restoreState()
 
-    # ── Description des données ────────────────────────────────
-    add_section(elements, "Description du jeu de données", sections["description_donnees"])
+    def draw_page_number(canvas, doc):
+        canvas.saveState()
+        canvas.setFillColor(SALI_MUTED)
+        canvas.setFont("Helvetica", 8)
+        canvas.drawRightString(page_width - 2.2 * cm, 0.9 * cm, str(doc.page))
+        canvas.restoreState()
 
-    # ── Résultats ──────────────────────────────────────────────
-    add_section(elements, "Résultats analytiques", sections["resultats"])
+    def add_section(elements: list, heading: str):
+        elements.append(Paragraph(_pdf_text(heading), section_style))
+        elements.append(HRFlowable(width="100%", thickness=0.7, color=SALI_LINE, spaceAfter=8))
 
-    # ── Visualisations ─────────────────────────────────────────
-    if images_b64:
-        elements.append(Paragraph("Visualisations", style_sec))
-        for idx, img_b64 in enumerate(images_b64):
+    elements: list = [PageBreak()]
+    add_section(elements, "Synthèse décisionnelle")
+    if report["synthese"]:
+        summary = Table(
+            [[Paragraph(_pdf_text(report["synthese"]), body_style)]],
+            colWidths=[16.6 * cm],
+        )
+        summary.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), SALI_PAPER),
+            ("BOX", (0, 0), (-1, -1), 0.8, SALI_LINE),
+            ("LEFTPADDING", (0, 0), (-1, -1), 14),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+            ("TOPPADDING", (0, 0), (-1, -1), 12),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ]))
+        elements.extend([summary, Spacer(1, 10)])
+    for index, message in enumerate(report["messages_cles"], 1):
+        elements.append(Paragraph(f"<b>{index:02d}</b> &nbsp; {_pdf_text(message)}", bullet_style))
+
+    if metrics:
+        add_section(elements, "Les données en un coup d'œil")
+        cells = []
+        for metric in metrics:
+            cells.append(Paragraph(
+                f"<font size='17' color='{SALI_INK_HEX}'><b>{_pdf_text(metric['value'])}</b></font>"
+                f"<br/><font size='8' color='{SALI_MUTED_HEX}'>{_pdf_text(metric['label']).upper()}</font>",
+                ParagraphStyle("Metric", alignment=TA_CENTER, leading=18),
+            ))
+        metric_table = Table([cells], colWidths=[16.6 * cm / len(cells)] * len(cells))
+        metric_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), SALI_WHITE),
+            ("GRID", (0, 0), (-1, -1), 0.7, SALI_LINE),
+            ("TOPPADDING", (0, 0), (-1, -1), 13),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 13),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elements.append(metric_table)
+
+    quality = report["qualite_donnees"]
+    if quality["synthese"] or quality["points_attention"]:
+        add_section(elements, "Périmètre et qualité des données")
+        if quality["synthese"]:
+            elements.append(Paragraph(_pdf_text(quality["synthese"]), body_style))
+        for point in quality["points_attention"]:
+            elements.append(Paragraph(f"• {_pdf_text(point)}", bullet_style))
+
+    if report["analyses"]:
+        add_section(elements, "Analyses et implications")
+        for index, insight in enumerate(report["analyses"], 1):
+            elements.append(Paragraph(
+                f"{index}. {_pdf_text(insight['titre'])}", insight_style
+            ))
+            if insight["constat"]:
+                elements.append(Paragraph("CONSTAT", label_style))
+                elements.append(Paragraph(_pdf_text(insight["constat"]), body_style))
+            if insight["preuve"]:
+                evidence = Table(
+                    [[Paragraph(f"<b>Preuve</b><br/>{_pdf_text(insight['preuve'])}", body_style)]],
+                    colWidths=[16.1 * cm],
+                )
+                evidence.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, -1), SALI_OLIVE_LIGHT),
+                    ("LINEBEFORE", (0, 0), (0, -1), 3, SALI_OLIVE),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                    ("TOPPADDING", (0, 0), (-1, -1), 8),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ]))
+                elements.extend([evidence, Spacer(1, 4)])
+            if insight["implication"]:
+                elements.append(Paragraph("IMPLICATION", label_style))
+                elements.append(Paragraph(_pdf_text(insight["implication"]), body_style))
+
+    valid_images = []
+    for value in images_b64 or []:
+        try:
+            valid_images.append(base64.b64decode(value))
+        except Exception:
+            logger.warning("Une visualisation illisible a été ignorée dans le PDF.")
+    if valid_images:
+        add_section(elements, "Visualisations")
+        for index, raw in enumerate(valid_images, 1):
             try:
-                buf = io.BytesIO(base64.b64decode(img_b64))
-                elements.append(Image(buf, width=14*cm, height=8*cm))
-                elements.append(Paragraph(f"Figure {idx + 1}", style_cap))
-                elements.append(Spacer(1, 8))
-            except Exception:
-                pass
+                width, height = _image_dimensions(raw, 15.8 * cm, 9.5 * cm)
+                figure = Image(io.BytesIO(raw), width=width, height=height)
+                figure.hAlign = "CENTER"
+                elements.extend([
+                    figure,
+                    Paragraph(f"Figure {index}", ParagraphStyle("Caption", parent=muted_style, alignment=TA_CENTER)),
+                    Spacer(1, 10),
+                ])
+            except Exception as exc:
+                logger.warning("Visualisation %s non insérée dans le PDF : %s", index, exc)
 
-    # ── Conclusions ────────────────────────────────────────────
-    add_section(elements, "Conclusions", sections["conclusions"])
+    if report["recommandations"]:
+        add_section(elements, "Plan d'action recommandé")
+        rows = [[
+            Paragraph("PRIORITÉ", label_style),
+            Paragraph("ACTION", label_style),
+            Paragraph("POURQUOI", label_style),
+        ]]
+        for recommendation in report["recommandations"]:
+            rows.append([
+                Paragraph(_pdf_text(recommendation["priorite"]), body_style),
+                Paragraph(_pdf_text(recommendation["action"]), body_style),
+                Paragraph(_pdf_text(recommendation["justification"]), body_style),
+            ])
+        action_table = Table(rows, colWidths=[2.4 * cm, 6.1 * cm, 8.1 * cm], repeatRows=1)
+        action_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), SALI_PAPER),
+            ("GRID", (0, 0), (-1, -1), 0.6, SALI_LINE),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        elements.append(action_table)
 
-    # ── Recommandations ────────────────────────────────────────
-    elements.append(Paragraph("Recommandations", style_sec))
-    for line in sections["recommandations"].split("\n"):
-        line = line.strip()
-        if line:
-            elements.append(Paragraph(line, style_rec))
+    if report["limites"] or report["prochaines_etapes"]:
+        add_section(elements, "Limites et prochaines étapes")
+        if report["limites"]:
+            elements.append(Paragraph("LIMITES", label_style))
+            for item in report["limites"]:
+                elements.append(Paragraph(f"• {_pdf_text(item)}", bullet_style))
+        if report["prochaines_etapes"]:
+            elements.append(Paragraph("PROCHAINES ÉTAPES", label_style))
+            for item in report["prochaines_etapes"]:
+                elements.append(Paragraph(f"• {_pdf_text(item)}", bullet_style))
 
-    # ── Pied de page ───────────────────────────────────────────
-    elements.append(Spacer(1, 20))
-    elements.append(HRFlowable(width="100%", thickness=1, color=GRAY, spaceAfter=8))
-    elements.append(Paragraph(
-        "Rapport généré par No-Code Data Intelligence · CITADEL Ouagadougou",
-        style_cap))
-
-    doc.build(elements)
+    document.build(elements, onFirstPage=draw_cover, onLaterPages=draw_page_number)
     buffer.seek(0)
     return buffer.read()
 
 
-# ── Génération Word ─────────────────────────────────────────────
+def _shade_word_cell(cell, fill: str) -> None:
+    properties = cell._tc.get_or_add_tcPr()
+    shading = OxmlElement("w:shd")
+    shading.set(qn("w:fill"), fill)
+    properties.append(shading)
+
+
+def _set_word_cell_text(cell, text: str, *, bold: bool = False, size: float = 9.5, color: str = "201E1D") -> None:
+    cell.text = ""
+    paragraph = cell.paragraphs[0]
+    run = paragraph.add_run(text)
+    run.bold = bold
+    run.font.name = "Aptos"
+    run.font.size = Pt(size)
+    run.font.color.rgb = RGBColor.from_string(color)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
 def build_word_report(
     title: str,
     institution: str,
@@ -352,129 +709,192 @@ def build_word_report(
     profile: dict | None = None,
     stats: dict | None = None,
     models: list | None = None,
+    logo_b64: str | None = None,
 ) -> bytes:
-    sections = draft_report_with_llm(
-        filename=filename,
-        analysis_text=analysis_text,
-        chat_history=messages,
-        title=title,
-        institution=institution,
-        model=model,
-        key_points=key_points,
-        profile=profile,
-        stats=stats,
-        models=models,
+    logo = _decode_logo(logo_b64)
+    report = _draft(
+        title=title, institution=institution, filename=filename,
+        analysis_text=analysis_text, messages=messages, model=model,
+        key_points=key_points, profile=profile, stats=stats, models=models,
     )
+    metrics = _report_metrics(profile, stats)
+    document = Document()
+    section = document.sections[0]
+    section.top_margin = Inches(0.85)
+    section.bottom_margin = Inches(0.8)
+    section.left_margin = Inches(1.0)
+    section.right_margin = Inches(1.0)
+    section.different_first_page_header_footer = True
 
-    doc = Document()
-    for section in doc.sections:
-        section.top_margin    = Inches(1)
-        section.bottom_margin = Inches(1)
-        section.left_margin   = Inches(1.2)
-        section.right_margin  = Inches(1.2)
+    normal = document.styles["Normal"]
+    normal.font.name = "Aptos"
+    normal.font.size = Pt(10.5)
+    normal.font.color.rgb = RGBColor.from_string("201E1D")
+    normal.paragraph_format.space_after = Pt(6)
 
-    def add_heading(text, size=14, color=(0x1a, 0x73, 0xe8)):
-        p = doc.add_paragraph()
-        r = p.add_run(text)
-        r.bold = True
-        r.font.size = Pt(size)
-        r.font.color.rgb = RGBColor(*color)
+    for name, size, color in (
+        ("Title", 27, "201E1D"),
+        ("Heading 1", 17, "667549"),
+        ("Heading 2", 12.5, "201E1D"),
+    ):
+        style = document.styles[name]
+        style.font.name = "Aptos Display"
+        style.font.size = Pt(size)
+        style.font.color.rgb = RGBColor.from_string(color)
+        style.font.bold = True
 
-    def add_body(text):
-        for line in text.split("\n"):
-            line = line.strip()
-            if line:
-                p = doc.add_paragraph(line)
-                p.runs[0].font.size = Pt(10)
-                p.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    footer = section.first_page_footer.paragraphs[0]
+    footer.text = "Généré par Sali AI"
+    footer.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    footer.runs[0].font.name = "Aptos"
+    footer.runs[0].font.size = Pt(8.5)
+    footer.runs[0].font.color.rgb = RGBColor.from_string("6F6A64")
 
-    # Page de garde
-    add_heading(title, size=22)
-    add_heading(institution, size=12, color=(0x5f, 0x63, 0x68))
-    add_heading(f"Source : {filename} · {datetime.now().strftime('%d/%m/%Y')}", size=10, color=(0x5f, 0x63, 0x68))
-    doc.add_page_break()
+    if logo:
+        document.add_picture(io.BytesIO(logo), width=Inches(1.55))
+        document.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    eyebrow = document.add_paragraph()
+    run = eyebrow.add_run("RAPPORT D'ANALYSE")
+    run.bold = True
+    run.font.name = "Aptos"
+    run.font.size = Pt(9)
+    run.font.color.rgb = RGBColor.from_string("667549")
+    eyebrow.paragraph_format.space_before = Pt(60 if logo else 90)
+    eyebrow.paragraph_format.space_after = Pt(12)
+    document.add_paragraph(report["titre"], style="Title")
+    accent = document.add_paragraph("━━━")
+    accent.runs[0].font.color.rgb = RGBColor.from_string("C67139")
+    accent.runs[0].font.size = Pt(13)
+    accent.paragraph_format.space_after = Pt(22)
+    source = document.add_paragraph(f"Source analysée · {_clean_text(filename) or 'Source de la session'}")
+    source.runs[0].font.color.rgb = RGBColor.from_string("6F6A64")
+    source.add_run(f"\nÉdition du {datetime.now().strftime('%d/%m/%Y')}")
+    source.runs[-1].font.color.rgb = RGBColor.from_string("6F6A64")
+    document.add_page_break()
 
-    # Sections
-    for cle, sec_title in SECTIONS_RAPPORT:
-        add_heading(sec_title)
-        add_body(sections[cle])
-        doc.add_paragraph()
+    def heading(text: str):
+        paragraph = document.add_paragraph(text, style="Heading 1")
+        paragraph.paragraph_format.space_before = Pt(12)
+        paragraph.paragraph_format.space_after = Pt(7)
+        return paragraph
 
-    # Visualisations
-    if images_b64:
-        add_heading("Visualisations")
-        for idx, img_b64 in enumerate(images_b64):
+    def bullets(items: list[str]):
+        for item in items:
+            paragraph = document.add_paragraph(style="List Bullet")
+            paragraph.add_run(item)
+
+    heading("Synthèse décisionnelle")
+    if report["synthese"]:
+        table = document.add_table(rows=1, cols=1)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        _shade_word_cell(table.cell(0, 0), "F9F4ED")
+        _set_word_cell_text(table.cell(0, 0), report["synthese"], size=10.5)
+        document.add_paragraph()
+    for index, message in enumerate(report["messages_cles"], 1):
+        paragraph = document.add_paragraph()
+        number = paragraph.add_run(f"{index:02d}  ")
+        number.bold = True
+        number.font.color.rgb = RGBColor.from_string("C67139")
+        paragraph.add_run(message)
+
+    if metrics:
+        heading("Les données en un coup d'œil")
+        table = document.add_table(rows=1, cols=len(metrics))
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        for index, metric in enumerate(metrics):
+            cell = table.cell(0, index)
+            _shade_word_cell(cell, "F9F4ED")
+            cell.text = ""
+            paragraph = cell.paragraphs[0]
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            value = paragraph.add_run(metric["value"])
+            value.bold = True
+            value.font.name = "Aptos Display"
+            value.font.size = Pt(17)
+            value.font.color.rgb = RGBColor.from_string("201E1D")
+            label = paragraph.add_run(f"\n{metric['label'].upper()}")
+            label.font.name = "Aptos"
+            label.font.size = Pt(7.5)
+            label.font.color.rgb = RGBColor.from_string("6F6A64")
+
+    quality = report["qualite_donnees"]
+    if quality["synthese"] or quality["points_attention"]:
+        heading("Périmètre et qualité des données")
+        if quality["synthese"]:
+            document.add_paragraph(quality["synthese"])
+        bullets(quality["points_attention"])
+
+    if report["analyses"]:
+        heading("Analyses et implications")
+        for index, insight in enumerate(report["analyses"], 1):
+            document.add_paragraph(f"{index}. {insight['titre']}", style="Heading 2")
+            if insight["constat"]:
+                document.add_paragraph(insight["constat"])
+            if insight["preuve"]:
+                table = document.add_table(rows=1, cols=1)
+                _shade_word_cell(table.cell(0, 0), "E8ECDF")
+                _set_word_cell_text(table.cell(0, 0), f"PREUVE\n{insight['preuve']}", size=9.5)
+            if insight["implication"]:
+                paragraph = document.add_paragraph()
+                label = paragraph.add_run("IMPLICATION  ")
+                label.bold = True
+                label.font.color.rgb = RGBColor.from_string("C67139")
+                paragraph.add_run(insight["implication"])
+
+    valid_images = []
+    for value in images_b64 or []:
+        try:
+            valid_images.append(base64.b64decode(value))
+        except Exception:
+            logger.warning("Une visualisation illisible a été ignorée dans Word.")
+    if valid_images:
+        heading("Visualisations")
+        for index, raw in enumerate(valid_images, 1):
             try:
-                buf = io.BytesIO(base64.b64decode(img_b64))
-                doc.add_picture(buf, width=Inches(5.5))
-                cap = doc.add_paragraph(f"Figure {idx + 1}")
-                cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                cap.runs[0].font.size = Pt(9)
-            except Exception:
-                pass
+                document.add_picture(io.BytesIO(raw), width=Inches(6.1))
+                document.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                caption = document.add_paragraph(f"Figure {index}")
+                caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                caption.runs[0].font.size = Pt(8.5)
+                caption.runs[0].font.color.rgb = RGBColor.from_string("6F6A64")
+            except Exception as exc:
+                logger.warning("Visualisation %s non insérée dans Word : %s", index, exc)
 
-    # Pied
-    doc.add_paragraph()
-    p = doc.add_paragraph("Rapport généré par No-Code Data Intelligence · CITADEL Ouagadougou")
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.runs[0].font.size = Pt(8)
-    p.runs[0].font.color.rgb = RGBColor(0x5f, 0x63, 0x68)
+    if report["recommandations"]:
+        heading("Plan d'action recommandé")
+        table = document.add_table(rows=1, cols=3)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.style = "Table Grid"
+        for cell, value in zip(table.rows[0].cells, ("PRIORITÉ", "ACTION", "POURQUOI")):
+            _shade_word_cell(cell, "F9F4ED")
+            _set_word_cell_text(cell, value, bold=True, size=8, color="C67139")
+        for recommendation in report["recommandations"]:
+            cells = table.add_row().cells
+            _set_word_cell_text(cells[0], recommendation["priorite"], bold=True, size=9)
+            _set_word_cell_text(cells[1], recommendation["action"], size=9)
+            _set_word_cell_text(cells[2], recommendation["justification"], size=9)
+
+    if report["limites"] or report["prochaines_etapes"]:
+        heading("Limites et prochaines étapes")
+        if report["limites"]:
+            document.add_paragraph("Limites", style="Heading 2")
+            bullets(report["limites"])
+        if report["prochaines_etapes"]:
+            document.add_paragraph("Prochaines étapes", style="Heading 2")
+            bullets(report["prochaines_etapes"])
 
     buffer = io.BytesIO()
-    doc.save(buffer)
+    document.save(buffer)
     buffer.seek(0)
     return buffer.read()
 
 
-# ── Génération PowerPoint ───────────────────────────────────────
-PPTX_PRIMAIRE = PptxRGB(0x1a, 0x73, 0xe8)
-PPTX_ENCRE = PptxRGB(0x20, 0x21, 0x24)
-PPTX_GRIS = PptxRGB(0x5f, 0x63, 0x68)
-
-# Au-delà, le texte déborde de la zone de contenu et PowerPoint le rogne
-# silencieusement à l'affichage. La section est alors répartie sur plusieurs
-# diapositives plutôt que tronquée.
-MAX_CAR_DIAPO = 700
-
-
-def _paquets_de_texte(texte: str, maximum: int = MAX_CAR_DIAPO) -> list[str]:
-    """Découpe une section en blocs tenant sur une diapositive.
-
-    La coupe suit les paragraphes, et à défaut les phrases : couper au milieu
-    d'une phrase donnerait une diapositive qui commence par une subordonnée
-    orpheline. Un paragraphe unique plus long que la limite est donc scindé sur
-    ses points, pas sur son compte de caractères.
-    """
-    paragraphes = [p.strip() for p in (texte or "").split("\n") if p.strip()]
-    if not paragraphes:
-        return [""]
-
-    morceaux: list[str] = []
-    for paragraphe in paragraphes:
-        if len(paragraphe) <= maximum:
-            morceaux.append(paragraphe)
-            continue
-        courant = ""
-        for phrase in re.split(r"(?<=[.!?])\s+", paragraphe):
-            if courant and len(courant) + len(phrase) + 1 > maximum:
-                morceaux.append(courant)
-                courant = phrase
-            else:
-                courant = f"{courant} {phrase}".strip()
-        if courant:
-            morceaux.append(courant)
-
-    paquets: list[str] = []
-    courant = ""
-    for morceau in morceaux:
-        if courant and len(courant) + len(morceau) + 1 > maximum:
-            paquets.append(courant)
-            courant = morceau
-        else:
-            courant = f"{courant}\n{morceau}".strip()
-    if courant:
-        paquets.append(courant)
-    return paquets or [""]
+def _clip(value: str, maximum: int) -> str:
+    text = _clean_text(value)
+    if len(text) <= maximum:
+        return text
+    shortened = text[: maximum - 1].rsplit(" ", 1)[0]
+    return f"{shortened}…"
 
 
 def build_powerpoint_report(
@@ -489,139 +909,172 @@ def build_powerpoint_report(
     profile: dict | None = None,
     stats: dict | None = None,
     models: list | None = None,
+    logo_b64: str | None = None,
 ) -> bytes:
-    sections = draft_report_with_llm(
-        filename=filename,
-        analysis_text=analysis_text,
-        chat_history=messages,
-        title=title,
-        institution=institution,
-        model=model,
-        key_points=key_points,
-        profile=profile,
-        stats=stats,
-        models=models,
+    logo = _decode_logo(logo_b64)
+    report = _draft(
+        title=title, institution=institution, filename=filename,
+        analysis_text=analysis_text, messages=messages, model=model,
+        key_points=key_points, profile=profile, stats=stats, models=models,
     )
+    metrics = _report_metrics(profile, stats)
 
     presentation = Presentation()
-    # 16:9 — le 4:3 par défaut de python-pptx est un format d'écran que plus
-    # personne ne projette, et il rogne la largeur utile des graphiques.
     presentation.slide_width = PptxInches(13.333)
     presentation.slide_height = PptxInches(7.5)
-    largeur = presentation.slide_width
-    hauteur = presentation.slide_height
+    width = presentation.slide_width
+    height = presentation.slide_height
+    blank = presentation.slide_layouts[6]
+    slide_number = 0
 
-    vierge = presentation.slide_layouts[6]
-    marge = PptxInches(0.9)
-    largeur_utile = largeur - 2 * marge
+    def rectangle(slide, x, y, w, h, fill, line=None, radius=True):
+        shape_type = MSO_SHAPE.ROUNDED_RECTANGLE if radius else MSO_SHAPE.RECTANGLE
+        shape = slide.shapes.add_shape(shape_type, x, y, w, h)
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = fill
+        if line:
+            shape.line.color.rgb = line
+            shape.line.width = PptxPt(0.8)
+        else:
+            shape.line.fill.background()
+        shape.shadow.inherit = False
+        return shape
 
-    def zone_texte(diapo, haut, hauteur_zone):
-        cadre = diapo.shapes.add_textbox(marge, haut, largeur_utile, hauteur_zone).text_frame
-        cadre.word_wrap = True
-        return cadre
-
-    def style(paragraphe, taille, couleur, gras=False, alignement=PP_ALIGN.LEFT):
-        paragraphe.alignment = alignement
-        for run in paragraphe.runs:
-            run.font.size = PptxPt(taille)
-            run.font.color.rgb = couleur
-            run.font.bold = gras
-            run.font.name = "Calibri"
-
-    def diapo_titre_section(titre: str, corps: str, suite: bool = False):
-        """Une diapositive de section : bandeau de titre, filet, puis le texte."""
-        diapo = presentation.slides.add_slide(vierge)
-
-        cadre_titre = zone_texte(diapo, PptxInches(0.55), PptxInches(0.9))
-        paragraphe = cadre_titre.paragraphs[0]
-        paragraphe.text = f"{titre} (suite)" if suite else titre
-        style(paragraphe, 28, PPTX_PRIMAIRE, gras=True)
-
-        filet = diapo.shapes.add_shape(MSO_SHAPE.RECTANGLE,marge, PptxInches(1.45), largeur_utile, Emu(12700))
-        filet.fill.solid()
-        filet.fill.fore_color.rgb = PPTX_PRIMAIRE
-        filet.line.fill.background()
-        filet.shadow.inherit = False
-
-        cadre = zone_texte(diapo, PptxInches(1.85), hauteur - PptxInches(2.6))
-        premier = True
-        for ligne in corps.split("\n"):
-            ligne = ligne.strip()
-            if not ligne:
-                continue
-            paragraphe = cadre.paragraphs[0] if premier else cadre.add_paragraph()
-            paragraphe.text = ligne
-            style(paragraphe, 15, PPTX_ENCRE)
-            paragraphe.space_after = PptxPt(10)
-            premier = False
-        return diapo
-
-    # ── Diapositive de titre ───────────────────────────────────
-    couverture = presentation.slides.add_slide(vierge)
-    bandeau = couverture.shapes.add_shape(MSO_SHAPE.RECTANGLE,0, PptxInches(2.55), largeur, PptxInches(0.06))
-    bandeau.fill.solid()
-    bandeau.fill.fore_color.rgb = PPTX_PRIMAIRE
-    bandeau.line.fill.background()
-    bandeau.shadow.inherit = False
-
-    cadre = zone_texte(couverture, PptxInches(2.75), PptxInches(2.2))
-    paragraphe = cadre.paragraphs[0]
-    paragraphe.text = title
-    style(paragraphe, 40, PPTX_ENCRE, gras=True)
-    for texte in (
-        institution,
-        f"Source analysée : {filename}",
-        f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}",
+    def text_box(
+        slide, x, y, w, h, text, size, color, *, bold=False,
+        align=PP_ALIGN.LEFT, valign=MSO_ANCHOR.TOP, margin=0,
     ):
-        paragraphe = cadre.add_paragraph()
-        paragraphe.text = texte
-        style(paragraphe, 15, PPTX_GRIS)
-        paragraphe.space_before = PptxPt(6)
+        shape = slide.shapes.add_textbox(x, y, w, h)
+        frame = shape.text_frame
+        frame.clear()
+        frame.word_wrap = True
+        frame.margin_left = frame.margin_right = frame.margin_top = frame.margin_bottom = margin
+        frame.vertical_anchor = valign
+        paragraph = frame.paragraphs[0]
+        paragraph.text = _clean_text(text)
+        paragraph.alignment = align
+        paragraph.space_after = PptxPt(0)
+        for run in paragraph.runs:
+            run.font.name = "Aptos"
+            run.font.size = PptxPt(size)
+            run.font.color.rgb = color
+            run.font.bold = bold
+        return shape
 
-    # ── Une à plusieurs diapositives par section ───────────────
-    for cle, titre_section in SECTIONS_RAPPORT:
-        for index, paquet in enumerate(_paquets_de_texte(sections[cle])):
-            diapo_titre_section(titre_section, paquet, suite=index > 0)
+    def base_slide(kicker: str, heading: str):
+        nonlocal slide_number
+        slide_number += 1
+        slide = presentation.slides.add_slide(blank)
+        rectangle(slide, 0, 0, width, height, PPTX_WHITE, radius=False)
+        rectangle(slide, 0, 0, PptxInches(0.16), height, PPTX_OLIVE, radius=False)
+        text_box(slide, PptxInches(0.8), PptxInches(0.45), PptxInches(8.5), PptxInches(0.28), kicker.upper(), 9, PPTX_ORANGE, bold=True)
+        text_box(slide, PptxInches(0.8), PptxInches(0.82), PptxInches(11.6), PptxInches(0.65), heading, 27, PPTX_INK, bold=True)
+        rectangle(slide, PptxInches(0.8), PptxInches(1.52), PptxInches(11.75), Emu(11000), PPTX_LINE, radius=False)
+        text_box(slide, PptxInches(12.05), PptxInches(7.02), PptxInches(0.55), PptxInches(0.2), f"{slide_number:02d}", 8, PPTX_MUTED, align=PP_ALIGN.RIGHT)
+        return slide
 
-    # ── Une diapositive par visualisation ──────────────────────
-    haut_image = PptxInches(1.85)
-    hauteur_max = hauteur - PptxInches(2.7)
-    for index, img_b64 in enumerate(images_b64 or []):
+    # Couverture : l'attribution Sali AI n'apparaît qu'ici.
+    slide_number += 1
+    cover = presentation.slides.add_slide(blank)
+    rectangle(cover, 0, 0, width, height, PPTX_PAPER, radius=False)
+    rectangle(cover, 0, 0, PptxInches(0.22), height, PPTX_OLIVE, radius=False)
+    rectangle(cover, PptxInches(0.8), PptxInches(0.82), PptxInches(0.12), PptxInches(0.12), PPTX_ORANGE)
+    text_box(cover, PptxInches(1.04), PptxInches(0.79), PptxInches(4.0), PptxInches(0.25), "RAPPORT D'ANALYSE", 10, PPTX_OLIVE, bold=True)
+    text_box(cover, PptxInches(0.85), PptxInches(2.0), PptxInches(10.7), PptxInches(1.55), report["titre"], 37, PPTX_INK, bold=True, valign=MSO_ANCHOR.MIDDLE)
+    rectangle(cover, PptxInches(0.86), PptxInches(3.78), PptxInches(1.55), Emu(22000), PPTX_ORANGE, radius=False)
+    text_box(
+        cover, PptxInches(0.85), PptxInches(4.18), PptxInches(9.5), PptxInches(0.32),
+        f"Source analysée · {_clean_text(filename) or 'Source de la session'}", 12, PPTX_MUTED,
+    )
+    text_box(cover, PptxInches(0.85), PptxInches(4.62), PptxInches(4.0), PptxInches(0.25), datetime.now().strftime("Édition du %d/%m/%Y"), 10, PPTX_MUTED)
+    if logo:
+        ratio = _logo_ratio(logo)
+        max_w, max_h = PptxInches(2.0), PptxInches(0.95)
+        logo_w, logo_h = _fit_dimensions(ratio, 1, max_w, max_h)
+        cover.shapes.add_picture(
+            io.BytesIO(logo), width - PptxInches(0.85) - int(logo_w), PptxInches(0.62),
+            width=int(logo_w), height=int(logo_h),
+        )
+    rectangle(cover, PptxInches(0.85), PptxInches(6.82), PptxInches(11.65), Emu(8500), PPTX_LINE, radius=False)
+    text_box(cover, PptxInches(0.85), PptxInches(6.98), PptxInches(3.0), PptxInches(0.2), "Généré par Sali AI", 8.5, PPTX_MUTED)
+
+    if report["messages_cles"] or report["synthese"]:
+        slide = base_slide("Synthèse", "À retenir")
+        messages_to_show = report["messages_cles"][:4]
+        if not messages_to_show and report["synthese"]:
+            messages_to_show = [report["synthese"]]
+        count = len(messages_to_show)
+        card_h = min(1.08, 4.7 / max(count, 1))
+        y = 1.86
+        for index, message in enumerate(messages_to_show, 1):
+            rectangle(slide, PptxInches(0.82), PptxInches(y), PptxInches(11.65), PptxInches(card_h), PPTX_PAPER, PPTX_LINE)
+            text_box(slide, PptxInches(1.08), PptxInches(y + 0.18), PptxInches(0.5), PptxInches(0.45), f"{index:02d}", 16, PPTX_ORANGE, bold=True, valign=MSO_ANCHOR.MIDDLE)
+            text_box(slide, PptxInches(1.72), PptxInches(y + 0.14), PptxInches(10.2), PptxInches(card_h - 0.24), _clip(message, 210), 17, PPTX_INK, bold=True, valign=MSO_ANCHOR.MIDDLE)
+            y += card_h + 0.18
+
+    if metrics:
+        slide = base_slide("Données", "Le périmètre en un coup d'œil")
+        count = len(metrics)
+        gap = 0.22
+        card_width = (11.65 - gap * (count - 1)) / count
+        for index, metric in enumerate(metrics):
+            x = 0.82 + index * (card_width + gap)
+            rectangle(slide, PptxInches(x), PptxInches(2.05), PptxInches(card_width), PptxInches(2.55), PPTX_PAPER, PPTX_LINE)
+            text_box(slide, PptxInches(x + 0.18), PptxInches(2.48), PptxInches(card_width - 0.36), PptxInches(0.9), metric["value"], 28, PPTX_INK, bold=True, align=PP_ALIGN.CENTER, valign=MSO_ANCHOR.MIDDLE)
+            text_box(slide, PptxInches(x + 0.18), PptxInches(3.58), PptxInches(card_width - 0.36), PptxInches(0.4), metric["label"].upper(), 9, PPTX_OLIVE, bold=True, align=PP_ALIGN.CENTER)
+        quality = report["qualite_donnees"]
+        quality_text = quality["synthese"] or "Les indicateurs ci-dessus décrivent le périmètre disponible pour l'analyse."
+        text_box(slide, PptxInches(1.25), PptxInches(5.14), PptxInches(10.8), PptxInches(0.9), _clip(quality_text, 360), 14, PPTX_MUTED, align=PP_ALIGN.CENTER)
+
+    for index, insight in enumerate(report["analyses"], 1):
+        slide = base_slide(f"Analyse {index:02d}", _clip(insight["titre"], 92))
+        text_box(slide, PptxInches(0.85), PptxInches(1.86), PptxInches(11.55), PptxInches(1.25), _clip(insight["constat"], 430), 18, PPTX_INK, bold=True, valign=MSO_ANCHOR.MIDDLE)
+        rectangle(slide, PptxInches(0.85), PptxInches(3.42), PptxInches(5.55), PptxInches(2.25), PPTX_OLIVE_LIGHT, PPTX_OLIVE)
+        text_box(slide, PptxInches(1.12), PptxInches(3.72), PptxInches(4.95), PptxInches(0.25), "PREUVE", 9, PPTX_OLIVE, bold=True)
+        text_box(slide, PptxInches(1.12), PptxInches(4.12), PptxInches(4.95), PptxInches(1.16), _clip(insight["preuve"] or "Aucun chiffre supplémentaire disponible.", 320), 15, PPTX_INK, bold=True, valign=MSO_ANCHOR.MIDDLE)
+        rectangle(slide, PptxInches(6.68), PptxInches(3.42), PptxInches(5.72), PptxInches(2.25), PPTX_PAPER, PPTX_LINE)
+        text_box(slide, PptxInches(6.96), PptxInches(3.72), PptxInches(5.1), PptxInches(0.25), "IMPLICATION", 9, PPTX_ORANGE, bold=True)
+        text_box(slide, PptxInches(6.96), PptxInches(4.08), PptxInches(5.1), PptxInches(1.24), _clip(insight["implication"] or "À interpréter selon le contexte métier.", 340), 14, PPTX_INK, valign=MSO_ANCHOR.MIDDLE)
+
+    for index, encoded in enumerate(images_b64 or [], 1):
         try:
-            donnees = io.BytesIO(base64.b64decode(img_b64))
-        except Exception:
-            logger.warning("Visualisation %s illisible, diapositive ignorée.", index + 1)
-            continue
-        try:
-            diapo = diapo_titre_section("Visualisations", "")
-            image = diapo.shapes.add_picture(donnees, marge, haut_image, width=largeur_utile)
-            # Ajouté à la largeur utile, le PNG garde son ratio : seule sa
-            # hauteur peut déborder. On la ramène sous le plafond en
-            # recalculant la largeur, plutôt qu'en imposant un cadre fixe qui
-            # déformerait le graphique.
-            if image.height > hauteur_max:
-                ratio = image.width / image.height
-                image.height = int(hauteur_max)
-                image.width = int(hauteur_max * ratio)
-            image.left = int((largeur - image.width) / 2)
-
-            legende = diapo.shapes.add_textbox(
-                marge, haut_image + image.height + PptxInches(0.1),
-                largeur_utile, PptxInches(0.35),
-            ).text_frame
-            legende.word_wrap = True
-            paragraphe = legende.paragraphs[0]
-            paragraphe.text = f"Figure {index + 1}"
-            style(paragraphe, 11, PPTX_GRIS, alignement=PP_ALIGN.CENTER)
+            raw = base64.b64decode(encoded)
+            image_w, image_h = _image_dimensions(raw, PptxInches(11.2), PptxInches(4.95))
         except Exception as exc:
-            logger.warning("Visualisation %s non insérée : %s", index + 1, exc)
+            logger.warning("Visualisation %s illisible, diapositive ignorée : %s", index, exc)
+            continue
+        slide = base_slide("Visualisation", f"Figure {index}")
+        left = int((width - image_w) / 2)
+        top = PptxInches(1.83) + int((PptxInches(4.95) - image_h) / 2)
+        slide.shapes.add_picture(io.BytesIO(raw), left, top, width=int(image_w), height=int(image_h))
 
-    # ── Diapositive de clôture ─────────────────────────────────
-    fin = presentation.slides.add_slide(vierge)
-    cadre = zone_texte(fin, hauteur // 2 - PptxInches(0.4), PptxInches(0.8))
-    paragraphe = cadre.paragraphs[0]
-    paragraphe.text = "Rapport généré par No-Code Data Intelligence · CITADEL Ouagadougou"
-    style(paragraphe, 13, PPTX_GRIS, alignement=PP_ALIGN.CENTER)
+    recommendations = report["recommandations"]
+    for page_index in range(0, len(recommendations), 3):
+        chunk = recommendations[page_index:page_index + 3]
+        suffix = "" if page_index == 0 else " — suite"
+        slide = base_slide("Décision", f"Plan d'action{suffix}")
+        y = 1.85
+        for recommendation in chunk:
+            rectangle(slide, PptxInches(0.85), PptxInches(y), PptxInches(11.55), PptxInches(1.36), PPTX_PAPER, PPTX_LINE)
+            rectangle(slide, PptxInches(1.1), PptxInches(y + 0.22), PptxInches(1.34), PptxInches(0.34), PPTX_OLIVE)
+            text_box(slide, PptxInches(1.13), PptxInches(y + 0.26), PptxInches(1.28), PptxInches(0.16), recommendation["priorite"].upper(), 7.5, PPTX_WHITE, bold=True, align=PP_ALIGN.CENTER)
+            text_box(slide, PptxInches(2.72), PptxInches(y + 0.18), PptxInches(8.95), PptxInches(0.42), _clip(recommendation["action"], 150), 16, PPTX_INK, bold=True)
+            text_box(slide, PptxInches(2.72), PptxInches(y + 0.69), PptxInches(8.95), PptxInches(0.42), _clip(recommendation["justification"], 220), 11.5, PPTX_MUTED)
+            y += 1.58
+
+    if report["limites"] or report["prochaines_etapes"]:
+        slide = base_slide("Suite", "Limites et prochaines étapes")
+        for x, heading, items, fill, color in (
+            (0.85, "LIMITES", report["limites"], PPTX_PAPER, PPTX_ORANGE),
+            (6.72, "PROCHAINES ÉTAPES", report["prochaines_etapes"], PPTX_OLIVE_LIGHT, PPTX_OLIVE),
+        ):
+            rectangle(slide, PptxInches(x), PptxInches(1.9), PptxInches(5.55), PptxInches(4.55), fill, PPTX_LINE)
+            text_box(slide, PptxInches(x + 0.3), PptxInches(2.22), PptxInches(4.95), PptxInches(0.3), heading, 9, color, bold=True)
+            y = 2.83
+            for index, item in enumerate(items[:4], 1):
+                text_box(slide, PptxInches(x + 0.34), PptxInches(y), PptxInches(0.38), PptxInches(0.25), f"{index:02d}", 10, color, bold=True)
+                text_box(slide, PptxInches(x + 0.82), PptxInches(y - 0.03), PptxInches(4.28), PptxInches(0.62), _clip(item, 155), 12.5, PPTX_INK)
+                y += 0.82
 
     buffer = io.BytesIO()
     presentation.save(buffer)

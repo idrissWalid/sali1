@@ -1,0 +1,54 @@
+/* SALI AI — jetons de marque. Une seule feuille à importer.
+   Palette : ajouter data-sali-palette="4a|4c|4e" sur <html> (4a par défaut).
+   Mode    : ajouter data-theme="dark|light" sur <html> (dark par défaut). */
+
+:root {
+  --sali-accent: #5980a6;  --sali-accent-2: #b0c4d8;
+  --sali-deep:   #416180;  --sali-hi: #cfe0ee;
+  --sali-ground: #131314;  --sali-ink: #e3e3e3;  --sali-muted: #8f9195;
+}
+[data-sali-palette="4c"] { --sali-accent:#b68235; --sali-accent-2:#e3d5b4; --sali-deep:#7d5a20; --sali-hi:#efe0bd; }
+[data-sali-palette="4e"] { --sali-accent:#7a8a5e; --sali-accent-2:#b68235; --sali-deep:#5c6b42; --sali-hi:#d6dfc4; }
+
+[data-theme="light"] { --sali-ground:#f2f2f3; --sali-ink:#1d1f20; --sali-muted:#5c5e61; }
+[data-theme="light"] .sali-mark { --sali-accent: var(--sali-deep); }  /* accent assombri : lisible sur papier */
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) { --sali-ground:#f2f2f3; --sali-ink:#1d1f20; --sali-muted:#5c5e61; }
+  :root:not([data-theme]) .sali-mark { --sali-accent: var(--sali-deep); }
+}
+
+/* ── le symbole ── */
+.sali-mark { width: 96px; height: 96px; display: block; overflow: visible; }
+.sali-mark--sm { width: 32px; height: 32px; }
+.sali-mark--xs { width: 16px; height: 16px; }
+
+/* ── les verrouillages typographiques ── */
+.sali-lockup { display: inline-flex; align-items: baseline; gap: .28em; color: var(--sali-ink);
+  line-height: 1; white-space: nowrap; font-style: normal; }
+.sali-lockup em { font-style: normal; color: var(--sali-accent); }
+
+.sali-condensed { font-family: "Barlow Condensed", system-ui, sans-serif; font-weight: 600;
+  font-size: 2rem; letter-spacing: .04em; }
+.sali-round     { font-family: Caprasimo, Georgia, serif; font-size: 1.75rem; }
+.sali-serifcaps { font-family: "Cormorant Garamond", Georgia, serif; font-size: 2rem; letter-spacing: .1em; }
+
+/* 2A — wordart pill */
+.sali-wordart { font-family: Caprasimo, Georgia, serif; font-size: 2rem; gap: .3em; align-items: center; }
+.sali-wordart .sali-pill { background: var(--sali-accent); color: var(--sali-ground);
+  border-radius: 999px; padding: .28em .62em .36em; display: inline-block; transform-origin: left center; }
+.sali-wordart .sali-ai { color: var(--sali-ink); }
+
+/* 3C — lowercase serif */
+.sali-serif { font-family: "Cormorant Garamond", Georgia, serif; flex-direction: column;
+  align-items: flex-start; gap: .12em; color: var(--sali-accent); }
+.sali-serif .sali-word { font-weight: 300; font-size: 3.25rem; letter-spacing: -.01em; color: var(--sali-ink); }
+.sali-serif .sali-word em { font-style: normal; color: var(--sali-accent); }
+.sali-serif .sali-underline { width: 2.6em; height: auto; }
+
+/* horizontal / vertical / icône seule */
+.sali-brand { display: inline-flex; align-items: center; gap: 1rem; }
+.sali-brand--stacked { flex-direction: column; align-items: flex-start; gap: .6rem; }
+
+/* zone de respect : jamais moins d'un quart de la hauteur du symbole */
+.sali-brand { padding: .25em; }

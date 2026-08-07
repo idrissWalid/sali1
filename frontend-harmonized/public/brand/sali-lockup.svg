@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 100">
+  <g transform="translate(0 6) scale(0.88)">
+    <circle cx="50" cy="53.8" r="37" fill="none" stroke="#7A8A5E" stroke-width="10.9"></circle>
+    <circle cx="79.4" cy="15.7" r="12" fill="#C67139"></circle>
+  </g>
+  <text x="112" y="58" font-family="Caprasimo, Georgia, serif" font-size="44" fill="#201E1D">Sali AI</text>
+  <text x="114" y="80" font-family="Figtree, system-ui, sans-serif" font-weight="700" font-size="12" letter-spacing="2.2" fill="#645C50">DATA INTELLIGENCE</text>
+</svg>
