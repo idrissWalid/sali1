@@ -32,10 +32,13 @@ if __name__ == "__main__":
     # est de 65 536 watchers inotify. Le watcher épuisait le quota, et webpack
     # côté frontend n'en obtenait plus aucun : « ENOSPC: System limit for number
     # of file watchers reached » en boucle. On ne surveille donc que le code.
+    #
+    # Host et port surchargeables par l'environnement (dev.ps1 -BackendPort),
+    # sans quoi deux instances ne peuvent pas cohabiter. Défauts inchangés.
     uvicorn.run(
         "app.main:app",
-        host="127.0.0.1",
-        port=8000,
+        host=os.getenv("BACKEND_HOST", "127.0.0.1"),
+        port=int(os.getenv("BACKEND_PORT", "8000")),
         reload=True,
         reload_dirs=["app"],
     )

@@ -41,6 +41,34 @@ docker-compose up --build
 
 ## Lancement Local (Sans Docker)
 
+### Option A — script PowerShell (Windows, recommandé)
+
+`dev.ps1` fait tout ce que la procédure manuelle ci-dessous décrit : création du venv, installation des dépendances Python et npm quand elles ont changé, vérification des ports, propagation de `API_AUTH_KEY` vers le frontend, démarrage des deux serveurs et arrêt propre au `Ctrl+C`.
+
+```powershell
+.\dev.ps1
+```
+
+Options utiles :
+
+| Option | Effet |
+| --- | --- |
+| `-Frontend frontend-redesign` | Lance une autre variante de frontend (`frontend`, `frontend-harmonized`, `frontend-redesign`) |
+| `-BackendPort 8010 -FrontendPort 3010` | Change les ports (utile pour deux instances en parallèle) |
+| `-Install` | Force la réinstallation des dépendances Python et npm |
+| `-BackendOnly` / `-FrontendOnly` | Ne démarre qu'un seul des deux serveurs |
+| `-Separate` | Ouvre chaque serveur dans sa propre fenêtre PowerShell |
+| `-Force` | Tue le processus qui occupe un port au lieu de s'arrêter |
+| `-NoBrowser` | N'ouvre pas le navigateur |
+
+Si PowerShell refuse d'exécuter le script (politique d'exécution) :
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\dev.ps1
+```
+
+### Option B — manuellement, en deux terminaux
+
 Si vous préférez exécuter l'application localement, suivez ces étapes dans deux terminaux séparés.
 
 ### 1. Démarrer le Backend (FastAPI)
