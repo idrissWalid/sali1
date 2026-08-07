@@ -39,10 +39,68 @@ class TrainTimeSeriesRequest(BaseModel):
     value_col: str
     dataset_id: Optional[str] = None
     horizon: Optional[int] = None
-    # "auto" = pipeline ARIMA/SARIMA rigoureux (code généré + autocorrigé)
-    # "autoforecast" = moteur multi-modèles déterministe (statsforecast) en sandbox
-    engine: str = "auto"
+    # "timecopilot"  = l'agent (venv dédié) — seul moteur proposé dans la modale
+    # "autoforecast" = statsforecast en sandbox, repli quand le modèle choisi ne
+    #                  gère pas le tool-use exigé par TimeCopilot
+    engine: str = "timecopilot"
     model: Optional[str] = None  # modèle LLM pour la génération de code / interprétation
+
+
+class ProposeVariablesRequest(BaseModel):
+    """Demande au LLM quelles colonnes modéliser, avant tout entraînement."""
+
+    session_id: str
+    kind: str  # "supervised" ou "timeseries"
+    dataset_id: Optional[str] = None
+    model: Optional[str] = None
+
+# ATTENTION à l'ordre : cette route doit rester DEVANT `GET /{session_id}`, qui
+# a la même forme (un seul segment) et l'avalerait — Starlette retient la
+# première déclaration qui matche, et `/models/timeseries-engine` partirait alors
+# lister les modèles d'une session nommée « timeseries-engine ».
+@router.get("/timeseries-engine")
+async def timeseries_engine(model: Optional[str] = None):
+    """Moteur qui tournera réellement pour le modèle LLM sélectionné.
+
+    Vérification faite AVANT le lancement : `supporte_tool_use` est une fonction
+    pure du nom du modèle, il n'y a aucune raison de faire patienter l'utilisateur
+    plusieurs minutes pour lui apprendre ensuite que son modèle ne convenait pas.
+    L'interface peut ainsi proposer le repli au moment du choix.
+    """
+    from app.services.timecopilot_service import (
+        disponible, message_refus_tool_use, message_venv_absent, supporte_tool_use,
+    )
+
+    llm = model or config.get_default_model()
+    tool_use = supporte_tool_use(llm)
+    installe = disponible()
+
+    if not installe:
+        avertissement = message_venv_absent()
+    elif not tool_use:
+        avertissement = message_refus_tool_use(llm)
+    else:
+        avertissement = None
+
+    utilisable = installe and tool_use
+    return {
+        "model": llm,
+        "tool_use": tool_use,
+        "timecopilot_installe": installe,
+        # Ce qui sera réellement exécuté si l'utilisateur confirme.
+        "engine": "timecopilot" if utilisable else "autoforecast",
+        "avertissement": avertissement,
+        # Repli assumé : des modèles statistiques en concurrence, sans agent LLM.
+        # Honnête sur ce qu'on y perd, pour que le choix soit éclairé.
+        "message_repli": None if utilisable else (
+            "Le repli **AutoForecast** met en concurrence des modèles statistiques "
+            "(AutoARIMA, AutoETS, AutoTheta, SeasonalNaive) et retient le meilleur. "
+            "Il fonctionne sans agent LLM, donc sans sélection raisonnée ni "
+            "explication des choix : les résultats peuvent être moins bons, et ne "
+            "seront pas argumentés."
+        ),
+    }
+
 
 @router.get("/{session_id}")
 async def list_models(session_id: str):
@@ -208,6 +266,32 @@ async def timeseries_candidates(session_id: str, dataset_id: Optional[str] = Non
     }
 
 
+@router.post("/propose-variables")
+async def propose_variables(request: ProposeVariablesRequest):
+    """Colonnes que le LLM propose de modéliser, avec son motif.
+
+    L'utilisateur reste libre de les changer : c'est une présélection argumentée,
+    pas une décision. Endpoint distinct des `*-candidates`, qui sont appelés à
+    chaque changement de session et doivent rester instantanés — ici il y a un
+    appel LLM, on ne le déclenche qu'à l'ouverture de la modale.
+    """
+    from app.services.variable_proposal import (
+        proposer_cible_supervisee, proposer_colonnes_serie,
+    )
+
+    if request.kind not in ("supervised", "timeseries"):
+        raise HTTPException(status_code=400, detail="kind doit valoir 'supervised' ou 'timeseries'.")
+
+    df, _ = await asyncio.to_thread(_load_dataset_df, request.session_id, request.dataset_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Jeu de données introuvable.")
+
+    llm = request.model or config.get_default_model()
+    if request.kind == "supervised":
+        return await asyncio.to_thread(proposer_cible_supervisee, df, llm)
+    return await asyncio.to_thread(proposer_colonnes_serie, df, llm)
+
+
 @router.get("/supervised-candidates/{session_id}")
 async def supervised_candidates(session_id: str, dataset_id: Optional[str] = None):
     """Colonnes utilisables comme cible, avec la famille qui en découlerait.
@@ -215,30 +299,15 @@ async def supervised_candidates(session_id: str, dataset_id: Optional[str] = Non
     Permet à l'interface d'annoncer « régression » ou « classification » AVANT
     de lancer un tournoi de plusieurs minutes.
     """
-    from app.services.supervised_specs import SEUIL_DESEQUILIBRE
+    # Même fonction que celle qui contraint la proposition du LLM : le sélecteur
+    # ne doit jamais offrir autre chose que ce que la proposition peut désigner.
+    from app.services.variable_proposal import cibles_supervisees
 
     df, _ = await asyncio.to_thread(_load_dataset_df, session_id, dataset_id)
     if df is None:
         raise HTTPException(status_code=404, detail="Jeu de données introuvable.")
 
-    cibles = []
-    for col in df.columns:
-        serie = df[col].dropna()
-        if serie.empty or serie.nunique() < 2:
-            continue
-        if pd.api.types.is_numeric_dtype(df[col]) and serie.nunique() > 20:
-            famille, ratio = "regression", None
-        else:
-            ratio = float(serie.value_counts(normalize=True).min())
-            famille = ("classification_desequilibree"
-                       if ratio < SEUIL_DESEQUILIBRE else "classification")
-        cibles.append({
-            "colonne": str(col),
-            "famille": famille,
-            "n_modalites": int(serie.nunique()),
-            "ratio_minoritaire": ratio,
-        })
-
+    cibles = await asyncio.to_thread(cibles_supervisees, df)
     return {"cibles": cibles, "n_rows": len(df), "feasible": bool(cibles)}
 
 
@@ -294,7 +363,7 @@ async def train_timeseries(request: TrainTimeSeriesRequest):
     renvoie son id."""
     from app.services.session_service import get_dataset
     from app.services.timeseries_pipeline import (
-        run_autoforecast_timeseries, run_rigorous_timeseries, run_timecopilot_timeseries,
+        run_autoforecast_timeseries, run_timecopilot_timeseries,
     )
 
     file_bytes, filename, profile, _stats = get_dataset(request.session_id, request.dataset_id)
@@ -313,29 +382,25 @@ async def train_timeseries(request: TrainTimeSeriesRequest):
     )
     llm_model = request.model or config.get_default_model()
 
-    if request.engine == "timecopilot":
-        # Le vrai TimeCopilot : agent LLM + modèles de fondation, dans son venv
-        # dédié. Pas de repli silencieux — l'utilisateur a choisi ce moteur.
-        result = await asyncio.to_thread(
-            run_timecopilot_timeseries,
-            question=question, file_bytes=file_bytes, filename=filename,
-            session_id=request.session_id, data_context=data_context, model=llm_model,
-            date_col=request.date_col, value_col=request.value_col, horizon=request.horizon,
+    # Deux moteurs seulement depuis la modale : TimeCopilot, et AutoForecast en
+    # repli assumé quand le modèle choisi ne gère pas le tool-use (voir
+    # /models/timeseries-engine, interrogé par l'interface AVANT le lancement).
+    # Le pipeline rigoureux n'est plus proposé ici ; il reste utilisé par le chat
+    # et sert de secours interne à AutoForecast.
+    if request.engine not in ("timecopilot", "autoforecast"):
+        raise HTTPException(
+            status_code=400,
+            detail="engine doit valoir 'timecopilot' ou 'autoforecast'.",
         )
-    elif request.engine == "autoforecast":
-        result = await asyncio.to_thread(
-            run_autoforecast_timeseries,
-            question=question, file_bytes=file_bytes, filename=filename,
-            session_id=request.session_id, data_context=data_context, model=llm_model,
-            date_col=request.date_col, value_col=request.value_col, horizon=request.horizon,
-        )
-    else:
-        result = await asyncio.to_thread(
-            run_rigorous_timeseries,
-            question=question, data_context=data_context, file_bytes=file_bytes,
-            filename=filename, session_id=request.session_id, model=llm_model,
-            date_col=request.date_col, value_col=request.value_col, horizon=request.horizon,
-        )
+
+    moteur = (run_timecopilot_timeseries if request.engine == "timecopilot"
+              else run_autoforecast_timeseries)
+    result = await asyncio.to_thread(
+        moteur,
+        question=question, file_bytes=file_bytes, filename=filename,
+        session_id=request.session_id, data_context=data_context, model=llm_model,
+        date_col=request.date_col, value_col=request.value_col, horizon=request.horizon,
+    )
 
     if not result.get("ok"):
         detail = result.get("error") or "Échec de l'entraînement."

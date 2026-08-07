@@ -18,6 +18,9 @@ import subprocess
 import sys
 from pydantic import ValidationError
 from app.core.json_utils import json_safe
+from app.services.chart_spec import (
+    extract_charts, extract_dataset, injectable_source, prelude_snippet,
+)
 from app.services.model_specs import ModelFamily, ModelSpec
 
 # Nom de l'image Docker sandbox (construite avec sandbox/Dockerfile)
@@ -49,7 +52,13 @@ def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None)
 
     # Injection pour fixer le problème de Read-Only File System sans avoir à rebuild l'image Docker.
     # Change le dossier de travail du processus vers /tmp avant d'exécuter le code.
-    safe_code = "import os, tempfile\ntry:\n    os.chdir(tempfile.gettempdir())\nexcept:\n    pass\n" + code
+    # Même raison pour le helper `emit_chart` : injecté à chaque exécution, il est
+    # disponible sans reconstruire l'image sandbox déjà en place.
+    safe_code = (
+        "import os, tempfile\ntry:\n    os.chdir(tempfile.gettempdir())\nexcept:\n    pass\n"
+        + prelude_snippet()
+        + code
+    )
 
     payload = json.dumps({
         "code": safe_code,
@@ -91,6 +100,7 @@ def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None)
         return {
             "output": "",
             "images": [],
+            "charts": [],
             "metrics": None,
             "error": {
                 "technical": f"TimeoutExpired: exécution dépassé {SANDBOX_TIMEOUT}s",
@@ -104,6 +114,7 @@ def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None)
         return {
             "output": "",
             "images": [],
+            "charts": [],
             "metrics": None,
             "error": {
                 "technical": str(exc),
@@ -119,6 +130,7 @@ def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None)
         return {
             "output": "",
             "images": [],
+            "charts": [],
             "metrics": None,
             "error": {
                 "technical": stderr or f"Exit code {proc.returncode}",
@@ -135,6 +147,7 @@ def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None)
         return {
             "output": stdout,
             "images": [],
+            "charts": [],
             "metrics": None,
             "error": {
                 "technical": f"Sortie non-JSON du container:\n{stdout}\nstderr:\n{stderr}",
@@ -155,9 +168,15 @@ def execute_code(code: str, dataframe_bytes: bytes = None, filename: str = None)
 
     if "metrics" not in result:
         result["metrics"] = None
-        
+
     if "models" not in result:
         result["models"] = []
+
+    # Les specs de graphiques et le jeu de données modifié transitent par stdout :
+    # on les en retire ici, sinon leur contenu repartirait tel quel dans le prompt
+    # d'interprétation.
+    result["charts"], sortie = extract_charts(result.get("output", ""))
+    result["dataset"], result["output"] = extract_dataset(sortie)
 
     return result
 
@@ -208,6 +227,7 @@ def _fallback_local_exec(code: str, dataframe_bytes: bytes, filename: str) -> di
 
     try:
         with contextlib.redirect_stdout(stdout_cap):
+            exec(injectable_source(), local_env)  # noqa: S102 — définit emit_chart
             exec(code, local_env)  # noqa: S102
         for fig_num in plt.get_fignums():
             fig = plt.figure(fig_num)
@@ -248,12 +268,20 @@ def _fallback_local_exec(code: str, dataframe_bytes: bytes, filename: str) -> di
                     })
                 except Exception:
                     pass
-    except Exception:
-        tb = traceback.format_exc()
+    except Exception as exc:
+        # `chain=False` : ce repli est appelé depuis le `except FileNotFoundError`
+        # de Docker, si bien que la traceback complète embarquerait en tête une
+        # panne (« docker introuvable ») étrangère au code exécuté. Elle repart
+        # telle quelle à l'autocorrection, qui dépense alors ses tentatives à
+        # réparer le mauvais problème.
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__, chain=False))
         lines = [l for l in tb.strip().splitlines() if l.strip()]
         error = {"technical": tb, "simple": lines[-1] if lines else str(tb)}
 
-    return {"output": stdout_cap.getvalue(), "images": images, "metrics": metrics, "models": locals().get("models", []), "error": error}
+    charts, sortie = extract_charts(stdout_cap.getvalue())
+    dataset, sortie = extract_dataset(sortie)
+    return {"output": sortie, "images": images, "charts": charts, "dataset": dataset,
+            "metrics": metrics, "models": locals().get("models", []), "error": error}
 
 def _incoherence_echelle_prevision(metrics: dict) -> str | None:
     """Détecte une prévision restée sur une échelle transformée.

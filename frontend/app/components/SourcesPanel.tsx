@@ -24,6 +24,14 @@ interface UploadData {
   summary?: string;
   /** Renseigné quand le fichier a été rattaché à une session déjà ouverte. */
   dataset_id?: string;
+  /** Présent quand le fichier importé était un classeur à plusieurs feuilles. */
+  feuilles?: {
+    total: number;
+    principale: string;
+    principale_affichage: string;
+    ajoutees: string[];
+    ignorees: string[];
+  } | null;
 }
 
 interface Props {

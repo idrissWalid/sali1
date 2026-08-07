@@ -1,16 +1,22 @@
 """timecopilot_runner.py — Script exécuté DANS le venv dédié à TimeCopilot.
 
 Ce fichier n'est jamais importé par le backend : il est lancé en sous-processus
-par `.venv-timecopilot/bin/python`, parce que les dépendances de TimeCopilot sont
-incompatibles avec celles du backend (openai>=1.99 vs pandasai<0.28 — aucune
-version commune n'existe).
+par `.venv-timecopilot/bin/python`, TimeCopilot portant son propre jeu de
+dépendances épinglées (dont openai>=1.99). Voir timecopilot_service.py pour
+l'historique de cette séparation.
 
 Protocole, calqué sur `sandbox/runner.py` pour rester familier :
   - entrée  : un JSON sur stdin
       {"csv": "...", "date_col": "...", "value_col": "...",
-       "freq": "MS"|null, "h": 12|null, "query": "...", "llm": "openai:gpt-4o"}
+       "freq": "MS"|null, "h": 12|null, "query": "...", "llm": "openai:gpt-4o",
+       "env": {"OPENAI_API_KEY": "...", "OLLAMA_BASE_URL": "..."}}
   - sortie  : un JSON sur stdout
       {"ok": bool, "result": {...}, "fcst": [...], "error": {...}|null}
+
+`env` porte les variables que pydantic-ai lira pour joindre le fournisseur. Elles
+transitent par le payload et non par l'environnement du processus : c'est le seul
+canal qui restera utilisable en conteneur, où des clés passées en `-e` seraient
+exposées dans `docker inspect`.
 
 Aucune dépendance au code du backend : ce script doit tourner avec le seul
 contenu du venv TimeCopilot.
@@ -18,6 +24,7 @@ contenu du venv TimeCopilot.
 
 import io
 import json
+import os
 import sys
 import traceback
 
@@ -131,6 +138,13 @@ def main() -> None:
     except Exception as exc:
         print(json.dumps(_erreur("Entrée illisible par le moteur TimeCopilot.", str(exc))))
         return
+
+    # Avant tout import de l'agent : pydantic-ai résout son fournisseur à la
+    # construction, en lisant l'environnement. Poser ces variables plus tard
+    # n'aurait aucun effet.
+    for cle, valeur in (payload.get("env") or {}).items():
+        if valeur:
+            os.environ[str(cle)] = str(valeur)
 
     try:
         import pandas as pd

@@ -23,6 +23,11 @@ fr_claude/.next/
 # dans frontend/, ces variantes n'ont pas vocation à vivre dans l'historique.
 /frontend-*/
 
+# Sortie du code généré : le pipeline de modélisation écrit `metrics.json` dans
+# son répertoire de travail, qui est backend/ quand l'exécution retombe en local
+# faute de Docker. C'est un résultat de run, pas une source.
+backend/metrics.json
+
 # IDEs and OS
 .vscode/
 .idea/

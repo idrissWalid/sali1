@@ -1,3 +1,4 @@
+from app.services.chart_spec import CONSIGNE_EMIT_CHART
 from app.services.gemini_service import complete_text
 from app.services.model_specs import ModelFamily, MODEL_SPECS
 from app.core import config
@@ -58,7 +59,11 @@ Demande utilisateur : {question}
 Le dataframe est dans la variable `df`.
 Ne mets aucun commentaire ni markdown. Code Python pur uniquement.
 
-IMPORTANT: Tu dois PRIVILÉGIER les courbes et visualisations (matplotlib/seaborn) pour illustrer les résultats du modèle de façon claire.
+{CONSIGNE_EMIT_CHART}
+
+IMPORTANT: illustre TOUJOURS les résultats du modèle par au moins un graphique
+`emit_chart` (importance des variables, valeurs prédites vs observées, taille
+des clusters selon le cas).
 
 CRITIQUE: Si tu entraînes un modèle prédictif (Classification, Régression, etc.), tu DOIS OBLIGATOIREMENT :
 1. Le sauvegarder avec `joblib.dump(model, "nom_du_modele.pkl")`
@@ -67,8 +72,8 @@ CRITIQUE: Si tu entraînes un modèle prédictif (Classification, Régression, e
    - "features": liste des noms exacts des colonnes d'entrée (ex: ["Age", "Revenu"])
    - "metrics": dictionnaire des performances (ex: {{ "Accuracy": 0.85 }})
 
-Bibliothèques disponibles : pandas, numpy, matplotlib, seaborn, 
-statsmodels, scikit-learn, joblib.
+Bibliothèques disponibles : pandas, numpy, matplotlib, seaborn,
+statsmodels, scikit-learn, joblib. `emit_chart` est disponible sans import.
 """
     try:
         code = complete_text(prompt, model, history).strip()

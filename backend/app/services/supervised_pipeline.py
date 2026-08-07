@@ -263,4 +263,5 @@ def run_supervised_tournament(
         )
 
     return {"ok": True, "response": response, "images": result.get("images", []),
+            "charts": result.get("charts", []),
             "model_id": model_id, "report": rapport, "error": None}

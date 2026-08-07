@@ -10,7 +10,9 @@ import asyncio
 # `SafeJSONResponse` ne protège pas ici : un StreamingResponse ne passe pas par
 # la classe de réponse par défaut.
 from app.core.json_utils import dumps_safe
-from app.services.ingestion_service import detect_file_type, load_tabular, extract_table_from_pdf
+from app.services.ingestion_service import (
+    decouper_classeur, detect_file_type, load_tabular, extract_table_from_pdf,
+)
 from app.services.analysis_service import analyze_tabular
 from app.services.session_service import create_session, save_data_context, add_to_history
 from app.services.session_service import save_file_bytes, rename_session
@@ -21,6 +23,75 @@ from app.core.config import get_api_key, PROVIDER_MODELS
 from app.core import config
 
 router = APIRouter()
+
+
+# ── Classeurs à plusieurs feuilles ───────────────────────────────────────────
+# La première feuille exploitable devient le jeu principal (chemin d'import
+# inchangé) ; les suivantes sont rattachées à la même session, exactement comme
+# des fichiers ajoutés ensuite. Deux feuilles de même structure déclenchent donc
+# aussi la proposition de fusion existante — le cas « une feuille par année ».
+
+async def _attacher_feuilles(session_id: str, classeur: dict | None, model: str | None) -> list[str]:
+    """Rattache les feuilles autres que la principale. Renvoie leurs noms."""
+    if not classeur:
+        return []
+
+    from app.services.session_service import add_dataset
+
+    ajoutees = []
+    for feuille in classeur["feuilles"][1:]:
+        # Pas d'interprétation par feuille : ce serait un appel LLM par onglet
+        # pour un texte que personne ne lit. Le profil et les statistiques, eux,
+        # sont nécessaires au contexte du chat et au tableau de bord.
+        analyse = await analyze_tabular(
+            feuille["bytes"], feuille["filename"], model=model, with_interpretation=False,
+        )
+        if analyse.get("status") == "error":
+            continue
+        add_dataset(
+            session_id, feuille["bytes"], feuille["filename"],
+            analyse["profile"], analyse["stats"],
+            name=feuille["nom_affichage"], source="sheet",
+        )
+        ajoutees.append(feuille["nom_affichage"])
+    return ajoutees
+
+
+def _resume_feuilles(classeur: dict | None, ajoutees: list[str]) -> dict | None:
+    if not classeur:
+        return None
+    return {
+        "total": classeur["total"],
+        "principale": classeur["feuilles"][0]["nom"],
+        # Nom affiché du jeu principal : le client montre la feuille retenue et
+        # non le nom du classeur, sinon l'intitulé changerait au rafraîchissement
+        # (la liste des jeux, elle, nomme bien la feuille).
+        "principale_affichage": classeur["feuilles"][0]["nom_affichage"],
+        "importees": [f["nom"] for f in classeur["feuilles"]],
+        "ajoutees": ajoutees,
+        "ignorees": classeur["ignorees"],
+    }
+
+
+def _phrase_feuilles(classeur: dict, ajoutees: list[str]) -> str:
+    """Ce qui est dit à l'utilisateur dans la conversation."""
+    principale = classeur["feuilles"][0]["nom"]
+    phrase = (
+        f"**Classeur de {classeur['total']} feuilles.** L'analyse ci-dessus porte "
+        f"sur « {principale} »."
+    )
+    if ajoutees:
+        phrase += (
+            f" {len(ajoutees)} autre(s) feuille(s) ont été importées comme jeux de "
+            f"données distincts : {', '.join(ajoutees)}. Sélectionnez-en une dans "
+            f"le panneau des sources pour l'interroger."
+        )
+    if classeur["ignorees"]:
+        phrase += (
+            f" Feuille(s) écartée(s), faute de tableau exploitable : "
+            f"{', '.join(classeur['ignorees'])}."
+        )
+    return phrase
 
 
 def batch_summarize_chunks(chunks: list[str], model: str) -> str:
@@ -66,7 +137,11 @@ Résumé final :
 async def list_llm_models():
     from app.services.ollama_service import list_models
 
-    models = list_models()
+    # `list_models` interroge Ollama en HTTP synchrone (timeout 5 s). Appelé
+    # directement, il gèle la boucle d'événements : quand Ollama est absent,
+    # tout le backend cesse de répondre pendant 5 s à chaque chargement de page,
+    # y compris les requêtes que le frontend lance en parallèle.
+    models = await asyncio.to_thread(list_models)
 
     proprietary = []
     if get_api_key("gemini"):
@@ -193,6 +268,24 @@ async def upload_file(
                 embedded_table_df = None  # devient le dataset principal, plus un secondaire
 
         if file_type == "tabular":
+            # Un classeur à plusieurs feuilles est éclaté en autant de jeux de
+            # données : sans ça, seule la première feuille serait lue — et une
+            # page de garde en première position ferait analyser la couverture
+            # à la place des données.
+            classeur = await asyncio.to_thread(decouper_classeur, file_bytes, filename)
+            if classeur:
+                principale = classeur["feuilles"][0]
+                file_bytes, filename = principale["bytes"], principale["filename"]
+                yield dumps_safe({
+                    "status": "processing",
+                    "step": 2,
+                    "message": (
+                        f"Classeur de {classeur['total']} feuilles : "
+                        f"{len(classeur['feuilles'])} importée(s) comme jeux distincts..."
+                    ),
+                }) + "\n"
+                await asyncio.sleep(0.05)
+
             # Étape 2 : Analyse structurelle
             yield dumps_safe({
                 "status": "processing",
@@ -256,6 +349,9 @@ async def upload_file(
                         attach_to_session, file_bytes, filename,
                         result["profile"], result["stats"], name=filename,
                     )
+                    feuilles_jointes = await _attacher_feuilles(
+                        attach_to_session, classeur, model,
+                    )
                     yield dumps_safe({
                         "status": "completed",
                         "data": {
@@ -266,6 +362,7 @@ async def upload_file(
                             "profile": result["profile"],
                             "stats": result["stats"],
                             "interpretation": result["interpretation"],
+                            "feuilles": _resume_feuilles(classeur, feuilles_jointes),
                         }
                     }) + "\n"
                     return
@@ -274,6 +371,16 @@ async def upload_file(
                 save_data_context(session_id, result["profile"], result["stats"], filename)
                 from app.services.session_service import save_initial_analysis
                 save_file_bytes(session_id, file_bytes, filename)
+
+                feuilles_jointes = await _attacher_feuilles(session_id, classeur, model)
+                if classeur:
+                    # Dit dans la conversation, pas seulement dans un statut
+                    # fugace : importer trois jeux de données en silence est
+                    # exactement ce qu'il ne faut pas faire.
+                    result["interpretation"] = (
+                        (result["interpretation"] or "").rstrip()
+                        + "\n\n" + _phrase_feuilles(classeur, feuilles_jointes)
+                    ).strip()
 
                 if want_interpretation:
                     save_initial_analysis(session_id, result["interpretation"])
@@ -302,7 +409,8 @@ async def upload_file(
                         "title": titre,
                         "profile": result["profile"],
                         "stats": result["stats"],
-                        "interpretation": result["interpretation"]
+                        "interpretation": result["interpretation"],
+                        "feuilles": _resume_feuilles(classeur, feuilles_jointes),
                     }
                 }) + "\n"
             except Exception as e:

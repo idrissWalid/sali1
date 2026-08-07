@@ -7,6 +7,7 @@ import ChatSettingsModal from "./ChatSettingsModal";
 import ChatMoreMenu from "./ChatMoreMenu";
 import ImageLightbox from "./ImageLightbox";
 import { ImageZoom, Image } from "./ImageZoom";
+import ChatChart, { type ChartSpec } from "./ChatChart";
 import Modal from "./Modal";
 import { PlaceholdersAndVanishInput } from "./PlaceholdersAndVanishInput";
 import WelcomePanel from "./WelcomePanel";
@@ -33,6 +34,9 @@ interface Message {
   role: "user" | "assistant";
   text: string;
   images?: string[];
+  // Graphiques structurés, rendus en interactif. Les `images` restent le repli
+  // pour les figures matplotlib sans équivalent (résidus, matrice de confusion).
+  charts?: ChartSpec[];
   isSummary?: boolean;
   sources?: { page: number; text: string }[];
 }
@@ -47,6 +51,9 @@ interface Props {
   // Signale au parent qu'un modèle est en cours de génération dans le chat
   // ("start") puis qu'il est terminé ("done", avec l'id si un modèle a été créé).
   onModelActivity?: (activity: { status: "start" } | { status: "done"; modelId?: string | null }) => void;
+  /** Les données de la session ont été modifiées depuis le chat : la liste des
+   *  sources (et son numéro de version) doit être rechargée. */
+  onDatasetChanged?: () => void;
 }
 
 // Helper pour parser le gras et le code inline
@@ -374,7 +381,7 @@ function renderMarkdown(
 }
 // ─────────────────────────────────────────────────────────────
 
-export default function ChatPanel({ sessionId, sourceCount, initialMessage, selectedModel, onUploadClick, onAssistantMessage, onModelActivity }: Props) {
+export default function ChatPanel({ sessionId, sourceCount, initialMessage, selectedModel, onUploadClick, onAssistantMessage, onModelActivity, onDatasetChanged }: Props) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const latestInput = useRef("");
@@ -585,7 +592,7 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-      let data: { response?: string; images?: string[]; sources?: unknown[]; model_id?: string | null } | null = null;
+      let data: { response?: string; images?: string[]; charts?: ChartSpec[]; sources?: unknown[]; model_id?: string | null; dataset_changed?: boolean } | null = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -620,9 +627,13 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
         role: "assistant",
         text: textResponse,
         images: data.images || [],
+        charts: data.charts || [],
         sources: (data.sources as Message["sources"]) || [],
       }]);
       onAssistantMessage?.(textResponse);
+      // Les données de la session ont changé : le panneau des sources doit
+      // repartir du serveur, sans quoi il afficherait encore l'ancienne version.
+      if (data.dataset_changed) onDatasetChanged?.();
     } catch (err: unknown) {
       // `unknown` plutôt que `any` : l'abort volontaire (bouton « interrompre »)
       // doit être distingué d'une vraie panne réseau, et le compilateur vérifie
@@ -874,6 +885,11 @@ export default function ChatPanel({ sessionId, sourceCount, initialMessage, sele
                           </span> Voir le Dashboard interactif
                         </button>
                       )}
+
+                      {/* Graphiques interactifs, avant les figures matplotlib */}
+                      {msg.charts?.map((chart, j) => (
+                        <ChatChart key={`chart-${j}`} spec={chart} />
+                      ))}
 
                       {/* Images générées par la sandbox — avant les suggestions */}
                       {msg.images && msg.images.length > 0 && (

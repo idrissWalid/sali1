@@ -36,7 +36,7 @@ def run_with_autocorrect(
         # Succès sans erreur
         if not result["error"]:
             # Vérifier si le résultat semble vide ou suspect
-            if not result["output"].strip() and not result["images"]:
+            if not result["output"].strip() and not result["images"] and not result.get("charts"):
                 # Rien produit — on demande à Gemini d'ajuster
                 code = _ask_correction(
                     code=code,

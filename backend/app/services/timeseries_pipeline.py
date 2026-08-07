@@ -13,6 +13,7 @@ Dans tous les cas, un modèle est enregistré (type "timeseries") et apparaît d
 dans les éléments générés, avec un dashboard dédié.
 """
 
+from app.services.chart_spec import chart_from_timeseries_report
 from app.services.model_specs import MODEL_SPECS, ModelFamily
 from app.services.ml_service import generate_timeseries_code, generate_ml_interpretation
 from app.services.code_pipeline import run_with_autocorrect
@@ -118,7 +119,12 @@ def run_rigorous_timeseries(
         f"les modèles générés — cliquez dessus pour ouvrir son dashboard."
     )
 
-    return {"ok": True, "response": response, "images": images, "model_id": model_id, "report": report, "error": None}
+    # Le rapport contient déjà l'historique et la prévision : la spec interactive
+    # s'en déduit, sans dépendre du graphique matplotlib produit par le code.
+    graphique = chart_from_timeseries_report(report)
+    return {"ok": True, "response": response, "images": images,
+            "charts": [graphique] if graphique else [],
+            "model_id": model_id, "report": report, "error": None}
 
 
 def _report_summary_for_llm(report: dict) -> str:
@@ -224,7 +230,9 @@ def run_autoforecast_timeseries(
         f"disponible dans les modèles générés."
     )
 
+    graphique = chart_from_timeseries_report(report)
     return {"ok": True, "response": response, "images": images,
+            "charts": [graphique] if graphique else [],
             "model_id": model_id, "report": report, "error": None}
 
 
@@ -377,5 +385,7 @@ def run_timecopilot_timeseries(
         f"modèles, tableau de prévision téléchargeable) est dans les modèles générés."
     )
 
+    graphique = chart_from_timeseries_report(report)
     return {"ok": True, "response": response, "images": [],
+            "charts": [graphique] if graphique else [],
             "model_id": model_id, "report": report, "error": None}

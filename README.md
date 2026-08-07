@@ -28,7 +28,7 @@ Avant de lancer l'application, vous devez configurer vos variables d'environneme
 
 ## Lancement avec Docker (Recommandé)
 
-Le fichier `docker-compose.yml` est configuré avec les limites de mémoire adéquates pour faire tourner les modèles de Machine Learning du backend (ex: pandasai, ydata-profiling, etc).
+Le fichier `docker-compose.yml` est configuré avec les limites de mémoire adéquates pour faire tourner les modèles de Machine Learning du backend (ex: ydata-profiling, scikit-learn, statsmodels, etc).
 
 À la racine du projet, exécutez simplement :
 

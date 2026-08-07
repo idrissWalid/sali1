@@ -6,13 +6,18 @@ TimeCopilot est un *agent* de prévision : il calcule des caractéristiques de s
 la baseline SeasonalNaive par cross-validation, puis explique ses décisions et
 répond à la question posée en langage naturel.
 
-Il ne peut pas vivre dans le venv du backend : il exige `openai>=1.99.7` quand
-`pandasai` 0.4.0 exige `openai<0.28`, sans version commune. On l'exécute donc
-dans `.venv-timecopilot` via un sous-processus.
+Il vit dans son propre venv `.venv-timecopilot`, appelé en sous-processus : il
+porte un jeu de dépendances épinglées (dont `openai>=1.99.7`) qui lui est propre.
+Le conflit qui rendait la cohabitation strictement impossible venait de
+`pandasai` (`openai<0.28`), retiré du projet depuis ; l'isolation est conservée,
+la compatibilité des deux environnements n'ayant pas été revérifiée.
 
 L'agent a besoin du réseau (API du LLM, poids HuggingFace) : il tourne sur l'hôte,
 pas dans le sandbox Docker — ce qui est cohérent, le sandbox existant pour confiner
 du code *généré*, pas une bibliothèque de confiance.
+
+Sa configuration de fournisseur (clés d'API, URL d'Ollama) voyage dans le payload
+JSON, pas dans l'environnement du sous-processus : voir `_environnement_fournisseur`.
 """
 
 import json
@@ -128,6 +133,47 @@ def message_venv_absent() -> str:
     )
 
 
+def url_ollama_pydantic_ai() -> str:
+    """URL d'Ollama au format attendu par pydantic-ai.
+
+    Deux conventions coexistent et ne se croisent jamais :
+      - le backend lit `OLLAMA_API_URL`, qui pointe l'API native
+        (« …:11434/api/generate ») ;
+      - pydantic-ai lit `OLLAMA_BASE_URL`, qui pointe l'endpoint
+        OpenAI-compatible et doit se terminer par « /v1 ».
+
+    Sans cette traduction, un Ollama servi ailleurs que sur localhost:11434 était
+    suivi par tout le backend SAUF TimeCopilot, qui continuait d'interroger
+    localhost et échouait sans que rien n'explique pourquoi.
+    """
+    from app.services.ollama_service import _base_url
+
+    return f"{_base_url()}/v1"
+
+
+def _environnement_fournisseur() -> dict:
+    """Variables que pydantic-ai lira pour joindre le fournisseur choisi.
+
+    Transmises DANS le payload plutôt que par l'environnement du sous-processus :
+    c'est le seul canal qui survivra au passage en conteneur, où des clés posées
+    en `-e` seraient lisibles dans `docker inspect` et dans la table des
+    processus de l'hôte. Le runner les repose lui-même avant d'importer l'agent.
+    """
+    variables = {"OLLAMA_BASE_URL": url_ollama_pydantic_ai()}
+    for fournisseur, var in (
+        ("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY"),
+        ("mistral", "MISTRAL_API_KEY"), ("groq", "GROQ_API_KEY"),
+        ("gemini", "GEMINI_API_KEY"),
+    ):
+        cle = config.get_api_key(fournisseur)
+        if cle:
+            variables[var] = cle
+            if fournisseur == "gemini":
+                # pydantic-ai attend GOOGLE_API_KEY pour le provider google.
+                variables["GOOGLE_API_KEY"] = cle
+    return variables
+
+
 def lancer_forecast(
     csv_text: str,
     date_col: str,
@@ -163,22 +209,8 @@ def lancer_forecast(
         "llm": traduire_modele(modele_app),
         "freq": freq,
         "h": horizon,
+        "env": _environnement_fournisseur(),
     }, ensure_ascii=False)
-
-    # Le sous-processus hérite des clés API par l'environnement : pydantic-ai lit
-    # OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY… comme le backend.
-    env = dict(os.environ)
-    for fournisseur, var in (
-        ("openai", "OPENAI_API_KEY"), ("anthropic", "ANTHROPIC_API_KEY"),
-        ("mistral", "MISTRAL_API_KEY"), ("groq", "GROQ_API_KEY"),
-        ("gemini", "GEMINI_API_KEY"),
-    ):
-        cle = config.get_api_key(fournisseur)
-        if cle:
-            env[var] = cle
-            if fournisseur == "gemini":
-                # pydantic-ai attend GOOGLE_API_KEY pour le provider google-gla.
-                env["GOOGLE_API_KEY"] = cle
 
     logger.info("TimeCopilot : %s → %s", modele_app, traduire_modele(modele_app))
     try:
@@ -187,7 +219,7 @@ def lancer_forecast(
             input=payload.encode("utf-8"),
             capture_output=True,
             timeout=TIMEOUT,
-            env=env,
+            env=dict(os.environ),
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "result": None, "fcst": [], "error": {

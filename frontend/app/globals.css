@@ -33,6 +33,25 @@
   --status-danger: #ef6b67;
   --focus-ring: #b8c990;
   --shadow-panel: 0 16px 44px rgba(0, 0, 0, 0.2);
+
+  /* ── Palette des graphiques (thème sombre) ──────────────────────────────
+     Huit teintes dans un ordre figé : cet ordre EST le mécanisme de sécurité
+     daltonisme, il ne se réarrange pas. Une série reçoit le slot suivant, on
+     ne recycle jamais au-delà de 8 (le 9ᵉ est indiscernable des précédents).
+     Jeu validé pour la surface sombre #191c23 : bande de clarté, plancher de
+     chroma, séparation protanopie/deutéranopie et contraste ≥ 3:1. */
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
+  --viz-4: #c98500;
+  --viz-5: #d55181;
+  --viz-6: #008300;
+  --viz-7: #9085e9;
+  --viz-8: #e66767;
+  --viz-surface: var(--surface-raised);
+  --viz-grid: rgba(187, 198, 224, 0.11);
+  --viz-axis: rgba(187, 198, 224, 0.22);
+  --viz-context: #6c717f;   /* séries reléguées au contexte (mode emphase) */
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -95,6 +114,23 @@
   --status-danger: #c43d38;
   --focus-ring: #667549;
   --shadow-panel: 0 14px 36px rgba(30, 35, 25, 0.08);
+
+  /* Mêmes huit teintes, redosées pour la surface claire (#ffffff) — c'est un
+     re-pas de la même famille, jamais un basculement automatique du sombre.
+     Trois slots (aqua, jaune, magenta) restent sous 3:1 sur fond blanc : la
+     vue tableau de chaque graphique est la contrepartie obligatoire. */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  --viz-7: #4a3aa7;
+  --viz-8: #e34948;
+  --viz-surface: var(--surface-raised);
+  --viz-grid: rgba(24, 24, 27, 0.09);
+  --viz-axis: rgba(24, 24, 27, 0.18);
+  --viz-context: #a1a1aa;
 }
 
 .sali-brand { display: flex; align-items: center; gap: 10px; }

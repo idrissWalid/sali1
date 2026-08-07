@@ -7,6 +7,7 @@ sentence-transformers
 pypdf
 reportlab
 python-docx
+python-pptx
 pandas
 # Version validée avec pandas 1.5.3, numba 0.58 et ydata-profiling. Ne pas
 # laisser pip remonter en numpy 2.x : les binaires pandas/numba compilés contre
@@ -31,11 +32,13 @@ bert-score
 httpx
 ydata-profiling==4.15.1
 docker
-pandasai
-# ATTENTION : `timecopilot` ne doit PAS figurer ici. Il exige openai>=1.99.7 là
-# où pandasai 0.4.0 exige openai<0.28 — aucune version commune n'existe, et
-# l'installer ici casse les statistiques descriptives. Il vit dans un venv
-# dédié : voir requirements-timecopilot.txt.
+# `pandasai` a été retiré : les statistiques descriptives passent désormais par
+# la génération de code et le sandbox Docker, comme les autres intentions.
+# ATTENTION : `timecopilot` ne doit PAS figurer ici pour autant. Il porte son
+# propre jeu de dépendances épinglées (dont openai>=1.99.7) et continue de vivre
+# dans un venv dédié : voir requirements-timecopilot.txt. Le conflit historique
+# venait de pandasai (openai<0.28) ; sa disparition n'a pas été vérifiée comme
+# rendant la fusion des deux environnements sûre.
 tf-keras
 openai-whisper
 soundfile

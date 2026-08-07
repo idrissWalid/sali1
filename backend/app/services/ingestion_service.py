@@ -56,6 +56,114 @@ def load_tabular(file_bytes: bytes, filename: str) -> dict:
         }
 
 
+# Un classeur à plusieurs feuilles n'est pas un tableau : c'est un dossier de
+# tableaux. `pd.read_excel` sans `sheet_name` n'en lit que le premier, en
+# silence — et la première feuille d'un classeur institutionnel est souvent une
+# page de garde. Chaque feuille exploitable devient donc un jeu de données à
+# part entière, converti en CSV pour que toute la chaîne (profilage, sandbox,
+# modèles) la lise comme n'importe quel autre fichier.
+MAX_FEUILLES = 12
+
+
+def _feuille_exploitable(df) -> bool:
+    """Une feuille porte-t-elle un tableau, ou seulement du décor ?
+
+    Deux colonnes suffisent à faire un tableau. Une colonne unique n'en est un
+    que si elle est longue — sinon c'est une couverture, un titre ou une note.
+    Heuristique assumée : le détail des feuilles écartées est renvoyé à
+    l'utilisateur, qui garde le dernier mot.
+    """
+    lignes, colonnes = len(df), len(df.columns)
+    if lignes == 0 or colonnes == 0:
+        return False
+    return colonnes >= 2 or lignes >= 10
+
+
+def _nom_de_fichier_sur(base: str, feuille: str) -> str:
+    """Nom de fichier lisible et sans caractère interdit, en .csv.
+
+    L'extension n'est pas cosmétique : toute la chaîne choisit son lecteur
+    (`read_csv` / `read_excel`) d'après elle.
+    """
+    brut = f"{base} — {feuille}"
+    propre = "".join(c if (c.isalnum() or c in " -_—().") else "_" for c in brut)
+    return propre.strip()[:120] + ".csv"
+
+
+def decouper_classeur(file_bytes: bytes, filename: str) -> dict | None:
+    """Découpe un classeur multi-feuilles en jeux de données indépendants.
+
+    Renvoie None si le fichier n'est pas un classeur ou n'a qu'une feuille —
+    le comportement reste alors strictement celui d'avant.
+
+    Sinon : {"feuilles": [{nom, nom_affichage, filename, bytes, rows, columns}],
+             "ignorees": [noms], "total": n}
+    """
+    if Path(filename).suffix.lower() not in (".xlsx", ".xls"):
+        return None
+
+    try:
+        classeur = pd.ExcelFile(io.BytesIO(file_bytes))
+    except Exception:
+        return None  # illisible ici : l'erreur sera rapportée par load_tabular
+
+    noms = list(classeur.sheet_names)
+    if len(noms) <= 1:
+        return None
+
+    base = Path(filename).stem
+    retenues, ignorees, premiere_non_vide = [], [], None
+
+    for nom in noms:
+        try:
+            df = classeur.parse(nom)
+        except Exception:
+            ignorees.append(nom)
+            continue
+
+        # Lignes et colonnes entièrement vides : fréquentes dans les classeurs
+        # mis en forme à la main, elles fausseraient le test d'exploitabilité.
+        df = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
+        if len(df) and len(df.columns) and premiere_non_vide is None:
+            premiere_non_vide = (nom, df)
+
+        if not _feuille_exploitable(df):
+            ignorees.append(nom)
+            continue
+
+        retenues.append({
+            "nom": nom,
+            "nom_affichage": f"{base} — {nom}",
+            "filename": _nom_de_fichier_sur(base, nom),
+            "bytes": df.to_csv(index=False).encode("utf-8"),
+            "rows": len(df),
+            "columns": len(df.columns),
+        })
+
+    # Filet de sécurité : si l'heuristique a tout écarté, on garde la première
+    # feuille non vide. Mieux vaut un tableau discutable que rien du tout.
+    if not retenues and premiere_non_vide:
+        nom, df = premiere_non_vide
+        ignorees = [n for n in ignorees if n != nom]
+        retenues.append({
+            "nom": nom,
+            "nom_affichage": f"{base} — {nom}",
+            "filename": _nom_de_fichier_sur(base, nom),
+            "bytes": df.to_csv(index=False).encode("utf-8"),
+            "rows": len(df),
+            "columns": len(df.columns),
+        })
+
+    if not retenues:
+        return None
+
+    if len(retenues) > MAX_FEUILLES:
+        ignorees.extend(f["nom"] for f in retenues[MAX_FEUILLES:])
+        retenues = retenues[:MAX_FEUILLES]
+
+    return {"feuilles": retenues, "ignorees": ignorees, "total": len(noms)}
+
+
 def extract_table_from_pdf(file_bytes: bytes):
     """Détecte et extrait un dataset tabulaire au sein d'un PDF (via pdfplumber).
 

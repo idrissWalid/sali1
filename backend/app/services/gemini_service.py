@@ -11,6 +11,7 @@ except Exception as exc:  # pragma: no cover - environment-dependent import
 else:
     _GENAI_IMPORT_ERROR = None
 
+from app.services.chart_spec import CONSIGNE_EMIT_CHART, CONSIGNE_TRANSFORMATION
 from app.services.ollama_service import ask_ollama
 from app.core import config
 
@@ -224,17 +225,12 @@ Question : {question}
 
 Génère UNIQUEMENT du code Python exécutable pour répondre à cette question.
 Le dataframe est déjà chargé dans la variable `df`.
-Utilise matplotlib avec un style sombre :
-  - fig, ax = plt.subplots(figsize=(10, 5))
-  - fig.patch.set_facecolor('#1a1a1a')
-  - ax.set_facecolor('#1a1a1a')
-  - Couleurs de texte : '#e3e3e3'
-  - Palette : ['#8ab4f8', '#c58af9', '#34a853', '#ea4335', '#fbbc04']
+
+{CONSIGNE_EMIT_CHART}
+
 
 Ne mets aucun commentaire, aucune explication, aucun bloc markdown.
 Juste le code Python pur, directement exécutable.
-
-IMPORTANT: Lors de tes analyses visuelles, PRIVILÉGIE l'utilisation de courbes (graphiques linéaires, séries temporelles, courbes de tendance) pour montrer l'évolution et les résultats dès que les données s'y prêtent.
 """
     try:
         gemini_history = _build_gemini_history(history)
@@ -250,14 +246,107 @@ IMPORTANT: Lors de tes analyses visuelles, PRIVILÉGIE l'utilisation de courbes 
             )
             response = chat.send_message(prompt)
             code = response.text.strip()
-            
-        # Nettoyer si Gemini met des backticks malgré tout
-        if code.startswith("```"):
-            lines = code.split("\n")
-            if lines[-1].startswith("```"):
-                code = "\n".join(lines[1:-1])
-            else:
-                code = "\n".join(lines[1:])
-        return code
+
+        return _sans_balises_markdown(code)
     except Exception as e:
+        return ""
+
+
+def generate_transformation_code(question: str, data_context: str, history: list = [],
+                                 model: str | None = None) -> str:
+    """Code Python qui MODIFIE le jeu de données de la session.
+
+    Contrairement aux autres générateurs, le code produit ici a un effet
+    persistant : sa sortie remplace les données de l'utilisateur. L'état
+    précédent est archivé côté serveur, donc la modification reste réversible.
+    """
+    model = model or config.get_default_model()
+    prompt = f"""
+Tu es un expert en manipulation de données avec pandas.
+
+{data_context}
+
+Modification demandée : {question}
+
+{CONSIGNE_TRANSFORMATION}
+
+{language_rule()}
+Ne mets aucun commentaire, aucune explication, aucun bloc markdown.
+Juste le code Python pur, directement exécutable.
+"""
+    try:
+        if model and not model.startswith("gemini"):
+            code = complete_text(prompt, model, history).strip()
+        else:
+            client = get_gemini_client()
+            chat = client.chats.create(model=model, history=_build_gemini_history(history))
+            code = chat.send_message(prompt).text.strip()
+        return _sans_balises_markdown(code)
+    except Exception:
+        logger.exception("Génération du code de transformation impossible.")
+        return ""
+
+
+def _sans_balises_markdown(code: str) -> str:
+    """Retire la clôture ```python … ``` que les modèles ajoutent malgré la consigne."""
+    if not code.startswith("```"):
+        return code
+    lines = code.split("\n")
+    if lines[-1].startswith("```"):
+        return "\n".join(lines[1:-1])
+    return "\n".join(lines[1:])
+
+
+def generate_stats_code(question: str, data_context: str, history: list = [], model: str | None = None) -> str:
+    """Code Python qui CALCULE une statistique descriptive demandée en chat.
+
+    Ce chemin passait auparavant par PandasAI, qui exécutait son code dans le
+    processus backend et, en cas d'échec, laissait le modèle répondre de
+    mémoire — un chiffre inventé s'y présentait comme un chiffre calculé. Le
+    code produit ici part dans le même sandbox isolé que les autres intentions.
+    """
+    model = model or config.get_default_model()
+    prompt = f"""
+Tu es un analyste de données Python.
+
+{data_context}
+
+Question : {question}
+
+Génère UNIQUEMENT du code Python exécutable qui CALCULE la réponse à partir du
+dataframe déjà chargé dans `df`. {language_rule()}
+
+RÈGLE ABSOLUE : aucune valeur affichée ne doit être écrite en dur. Toute
+statistique montrée sort d'un calcul sur `df` — c'est la raison d'être de ce
+code, l'utilisateur ne verra pas les données autrement.
+
+Mise en forme du résultat :
+- Un tableau : arrondis (`.round(2)`) puis `print(markdown_table(tableau))`.
+- Une valeur unique : `print` avec son libellé et son unité.
+- Ne montre que ce qui répond à la question : pas de `describe()` complet quand
+  une seule statistique est demandée.
+- Au-delà de 30 lignes, n'affiche que les 30 premières et indique le total.
+- Les valeurs manquantes sont exclues des calculs, et leur nombre est signalé
+  quand il n'est pas nul — une moyenne calculée sur des trous n'est pas la même
+  statistique.
+
+{CONSIGNE_EMIT_CHART}
+
+Ajoute un graphique seulement quand il éclaire la réponse (distribution,
+fréquences des principales modalités, corrélations) ; une valeur unique se lit
+mieux en texte.
+
+Ne mets aucun commentaire, aucune explication, aucun bloc markdown.
+Juste le code Python pur, directement exécutable.
+"""
+    try:
+        if model and not model.startswith("gemini"):
+            code = complete_text(prompt, model, history).strip()
+        else:
+            client = get_gemini_client()
+            chat = client.chats.create(model=model, history=_build_gemini_history(history))
+            code = chat.send_message(prompt).text.strip()
+        return _sans_balises_markdown(code)
+    except Exception:
+        logger.exception("Génération du code de statistiques descriptives impossible.")
         return ""

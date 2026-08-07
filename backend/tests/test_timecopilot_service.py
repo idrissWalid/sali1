@@ -1,8 +1,8 @@
 """TimeCopilot vit dans un venv dédié, appelé en sous-processus.
 
-Ses contraintes n'ont aucune version commune avec `pandasai` (`openai>=1.99` vs
-`openai<0.28`) : l'installer dans le venv principal casse les statistiques
-descriptives. Ces tests verrouillent la frontière entre les deux environnements.
+Il porte ses propres dépendances épinglées (dont `openai>=1.99`), historiquement
+inconciliables avec `pandasai` (`openai<0.28`, depuis retiré du projet). Ces
+tests verrouillent la frontière entre les deux environnements.
 """
 
 import sys
@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import app.services.timecopilot_service as tc
 from app.services.timecopilot_service import (
     TimeCopilotIndisponible, lancer_forecast, supporte_tool_use, traduire_modele,
+    url_ollama_pydantic_ai,
 )
 
 
@@ -35,6 +36,49 @@ class TestTraductionModele:
     ])
     def test_conversion(self, app_id, attendu):
         assert traduire_modele(app_id) == attendu
+
+
+class TestUrlOllama:
+    """Deux conventions coexistent et ne se croisent pas : le backend lit
+    `OLLAMA_API_URL` (API native), pydantic-ai lit `OLLAMA_BASE_URL` (endpoint
+    OpenAI-compatible, terminé par « /v1 »). Sans traduction, un Ollama servi
+    ailleurs que sur localhost était suivi partout SAUF par TimeCopilot."""
+
+    @pytest.mark.parametrize("api_url,attendu", [
+        (None, "http://localhost:11434/v1"),
+        ("http://localhost:11434/api/generate", "http://localhost:11434/v1"),
+        ("http://192.168.1.42:11434/api/generate", "http://192.168.1.42:11434/v1"),
+        ("http://ollama.interne:8080/api/chat", "http://ollama.interne:8080/v1"),
+    ])
+    def test_traduit_vers_l_endpoint_openai(self, monkeypatch, api_url, attendu):
+        import importlib
+        import app.services.ollama_service as ollama
+
+        if api_url is None:
+            monkeypatch.delenv("OLLAMA_API_URL", raising=False)
+        else:
+            monkeypatch.setenv("OLLAMA_API_URL", api_url)
+        importlib.reload(ollama)
+        try:
+            assert url_ollama_pydantic_ai() == attendu
+        finally:
+            monkeypatch.delenv("OLLAMA_API_URL", raising=False)
+            importlib.reload(ollama)
+
+    def test_l_url_ollama_accompagne_toujours_le_payload(self, monkeypatch):
+        """Même sans clé d'API configurée : c'est la seule façon pour l'agent de
+        joindre un Ollama qui n'est pas sur localhost."""
+        monkeypatch.setattr(tc.config, "get_api_key", lambda _f: None)
+        assert "OLLAMA_BASE_URL" in tc._environnement_fournisseur()
+
+    def test_gemini_est_double_en_google_api_key(self, monkeypatch):
+        monkeypatch.setattr(
+            tc.config, "get_api_key",
+            lambda f: "cle-gemini" if f == "gemini" else None,
+        )
+        env = tc._environnement_fournisseur()
+        assert env["GEMINI_API_KEY"] == "cle-gemini"
+        assert env["GOOGLE_API_KEY"] == "cle-gemini"
 
 
 class TestToolUse:

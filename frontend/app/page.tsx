@@ -43,6 +43,14 @@ interface UploadData {
   type: string;
   interpretation?: string;
   summary?: string;
+  /** Présent quand le fichier importé était un classeur à plusieurs feuilles. */
+  feuilles?: {
+    total: number;
+    principale: string;
+    principale_affichage: string;
+    ajoutees: string[];
+    ignorees: string[];
+  } | null;
 }
 
 export default function Home() {
@@ -107,6 +115,10 @@ export default function Home() {
   // Anchor ref for positioning avatar dropdown
   const avatarRef = useRef<HTMLButtonElement>(null);
 
+  // Vrai quand la dernière tentative de restauration a échoué pour une raison
+  // passagère : le pointeur de session persisté doit alors être préservé.
+  const [restaurationRatee, setRestaurationRatee] = useState(false);
+
   useEffect(() => {
     // Tant que la restauration initiale (lecture de active_session_id) n'est
     // pas terminée, sessionId vaut encore null : ne pas effacer la valeur
@@ -116,10 +128,13 @@ export default function Home() {
 
     if (sessionId) {
       localStorage.setItem("active_session_id", sessionId);
-    } else {
+    } else if (!restaurationRatee) {
+      // `sessionId` est aussi nul quand la restauration a échoué : sans cette
+      // garde, une panne passagère effaçait le pointeur et la session était
+      // définitivement perdue, y compris aux rafraîchissements suivants.
       localStorage.removeItem("active_session_id");
     }
-  }, [sessionId, isPageLoading]);
+  }, [sessionId, isPageLoading, restaurationRatee]);
 
   // État de la liste des sessions. Un échec ne se voyait nulle part : la barre
   // latérale affichait « Aucune discussion enregistrée », strictement
@@ -166,36 +181,89 @@ export default function Home() {
   };
 
 
-  const handleSelectSession = async (id: string) => {
+  /** Toutes les sources d'une session, telles que le serveur les connaît.
+   *
+   * `session.filename` ne nomme que le fichier principal : une session porte
+   * aussi le tableau extrait d'un PDF et les fichiers ajoutés en cours de
+   * route. Les reconstruire depuis ce seul champ faisait disparaître tous les
+   * autres au rafraîchissement, alors qu'ils étaient toujours en base.
+   */
+  const chargerSources = async (
+    id: string, sessionType: string, filenamePrincipal?: string,
+  ): Promise<Source[]> => {
+    const enSource = (nom: string, estDocument: boolean, version = 1): Source => ({
+      name: nom,
+      type: estDocument ? "document" : "tabular",
+      // Le numéro de version ne s'affiche qu'à partir de la première
+      // modification : sinon il ferait du bruit sur un jeu jamais touché.
+      meta: (estDocument ? "Document" : "Données tabulaires")
+        + (version > 1 ? ` · v${version}` : ""),
+    });
+
     try {
-      const apiUrl = API_URL;
-      const res = await fetch(`${apiUrl}/api/sessions/${id}`);
-      if (!res.ok) throw new Error("Erreur serveur");
+      const res = await fetch(`${API_URL}/api/sessions/${id}/datasets`);
+      if (res.ok) {
+        const data = await res.json();
+        const jeux: { id: string; name?: string; filename?: string; version?: number }[] =
+          data.datasets ?? [];
+        if (jeux.length > 0) {
+          // Seul le fichier principal d'une session document est un document ;
+          // les jeux attachés (tableau extrait, ajouts) sont tabulaires.
+          return jeux.map((jeu) => enSource(
+            jeu.name || jeu.filename || "Source",
+            jeu.id === "__main__" && sessionType !== "tabular",
+            jeu.version ?? 1,
+          ));
+        }
+      }
+    } catch (err) {
+      console.error("Liste des jeux de données indisponible :", err);
+    }
+
+    // Repli : le fichier principal seul, comme avant — mieux qu'un panneau vide.
+    return filenamePrincipal ? [enSource(filenamePrincipal, sessionType !== "tabular")] : [];
+  };
+
+  /** Recharge la liste des sources de la session ouverte, après une opération
+   *  qui a changé les données (modification demandée depuis le chat). */
+  const rechargerSources = async () => {
+    if (!sessionId) return;
+    const type = sessions.find((s) => s.id === sessionId)?.type ?? "tabular";
+    setSources(await chargerSources(sessionId, type));
+  };
+
+  /** Charge une session. Renvoie `false` si l'échec est transitoire (le pointeur
+   *  persisté est alors conservé, un nouvel essai peut aboutir). */
+  const handleSelectSession = async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_URL}/api/sessions/${id}`);
+
+      // 404 : la session n'existe réellement plus, on peut l'oublier. Toute
+      // autre panne est transitoire (backend qui démarre, coupure réseau) :
+      // effacer le pointeur ferait perdre la session pour de bon.
+      if (res.status === 404) {
+        if (id === localStorage.getItem("active_session_id")) {
+          localStorage.removeItem("active_session_id");
+        }
+        return true;
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
 
+      setRestaurationRatee(false);
       setSessionId(data.id);
 
-      // Mettre à jour les sources avec le fichier de la session
-      if (data.filename) {
-        setSources([
-          {
-            name: data.filename,
-            type: data.type === "tabular" ? "tabular" : "document",
-            meta: data.type === "tabular" ? "Données tabulaires" : "Document",
-          }
-        ]);
-        setLeftTab("sources");
-      } else {
-        setSources([]);
-      }
+      const restaurees = await chargerSources(data.id, data.type, data.filename);
+      setSources(restaurees);
+      if (restaurees.length > 0) setLeftTab("sources");
 
       // Pas de message initial lors de la reprise d'une session
       setInitialMessage(null);
+      return true;
     } catch (err) {
       console.error("Erreur lors du chargement des détails de la session:", err);
-      if (id === localStorage.getItem("active_session_id")) {
-        localStorage.removeItem("active_session_id");
-      }
+      setRestaurationRatee(true);
+      return false;
     }
   };
 
@@ -250,11 +318,21 @@ export default function Home() {
     const estTabulaire = data.type === "tabular_analyzed" || data.type === "dataset_added";
 
     const newSource: Source = {
-      name: data.filename || data.profile?.filename || "Source",
+      // Un classeur découpé en feuilles est représenté par la feuille retenue,
+      // pas par le nom du classeur : c'est ce que la session porte réellement.
+      name: data.feuilles?.principale_affichage
+        || data.filename || data.profile?.filename || "Source",
       type: estTabulaire ? "tabular" : "document",
       meta: estTabulaire ? "Données tabulaires" : "Document",
     };
-    setSources(s => [...s, newSource]);
+    // Les autres feuilles sont devenues des jeux de données à part entière :
+    // elles apparaissent immédiatement, sans attendre un rafraîchissement.
+    const feuillesJointes: Source[] = (data.feuilles?.ajoutees ?? []).map((nom) => ({
+      name: nom,
+      type: "tabular",
+      meta: "Données tabulaires",
+    }));
+    setSources(s => [...s, newSource, ...feuillesJointes]);
     setLeftTab("sources");
 
     if (!ajoutDansSession) {
@@ -271,6 +349,9 @@ export default function Home() {
   };
 
   const handleNewSession = () => {
+    // Départ volontaire : le pointeur persisté doit bien être effacé, la garde
+    // de restauration ne s'applique qu'aux échecs subis.
+    setRestaurationRatee(false);
     setSources([]);
     setSessionId(null);
     setInitialMessage(null);
@@ -280,24 +361,45 @@ export default function Home() {
     let isMounted = true;
 
     const initializeApp = async () => {
-      try {
-        await Promise.all([fetchSessions(), fetchModels()]);
-        const savedSessionId = localStorage.getItem("active_session_id");
-        if (savedSessionId && isMounted) {
-          await handleSelectSession(savedSessionId);
-        }
-      } finally {
-        if (isMounted) {
-          setIsPageLoading(false);
+      await Promise.all([fetchSessions(), fetchModels()]);
+      const savedSessionId = localStorage.getItem("active_session_id");
+      if (savedSessionId && isMounted) {
+        const restauree = await handleSelectSession(savedSessionId);
+        // Un second essai après un court délai : au rechargement de la page,
+        // le backend peut n'être pas encore prêt à répondre, et un panneau
+        // vide est indiscernable d'une session sans fichier.
+        if (!restauree && isMounted) {
+          await new Promise((resoudre) => setTimeout(resoudre, 700));
+          if (isMounted) await handleSelectSession(savedSessionId);
         }
       }
     };
 
-    initializeApp();
+    // `fetch` n'a pas de délai d'expiration : une requête qui n'aboutit jamais
+    // (backend éteint en cours de route, tunnel coupé) laissait la promesse en
+    // suspens, donc le squelette de chargement affiché indéfiniment — c'était
+    // le seul endroit du composant à lever `isPageLoading`. L'échéance garantit
+    // que l'interface s'affiche ; les requêtes lentes qui aboutissent ensuite
+    // peuplent l'écran normalement, celles qui échouent laissent leurs états
+    // d'erreur respectifs faire leur travail.
+    const echeance = new Promise<void>((resoudre) => setTimeout(resoudre, 12_000));
+
+    Promise.race([
+      initializeApp().catch((err) => {
+        console.error("Initialisation interrompue :", err);
+      }),
+      echeance,
+    ]).finally(() => {
+      if (isMounted) setIsPageLoading(false);
+    });
 
     return () => {
       isMounted = false;
     };
+    // Initialisation au montage uniquement : réexécuter cet effet à chaque
+    // nouvelle identité de `handleSelectSession` rechargerait la session en
+    // boucle, à chaque rendu.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (isPageLoading) {
@@ -548,6 +650,7 @@ export default function Home() {
           <Separator className="workspace-separator" style={{ width: "8px" }} />
           <Panel defaultSize={55} minSize={30} className={`workspace-panel workspace-panel--chat${mobileView === "chat" ? " is-mobile-active" : ""}`} style={{ width: "100%" }}>
             <ChatPanel
+              onDatasetChanged={rechargerSources}
               sessionId={sessionId}
               sourceCount={sources.length}
               initialMessage={initialMessage}

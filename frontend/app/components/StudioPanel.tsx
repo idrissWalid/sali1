@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { AudioLines, BrainCircuit, FileText, FolderOpen, LayoutDashboard, Loader2, LineChart } from "lucide-react";
+import { AudioLines, BrainCircuit, FileText, LayoutDashboard, Loader2, LineChart, Presentation } from "lucide-react";
 import Modal from "./Modal";
 import GlareHover from './GlareHover';
 import { API_URL } from "@/lib/api";
@@ -31,17 +31,41 @@ const STUDIO_ITEMS_SOON = [
       </span>
     ), label: "Résumé audio"
   },
-  {
-    icon: (
-      <span style={{ display: "inline-flex", alignItems: "center" }}>
-        <FolderOpen size={22} strokeWidth={1.8} />
-      </span>
-    ), label: "Fiches synthèse"
-  },
 ];
 
-type ReportFormat = "pdf" | "word" | null;
+type ReportFormat = "pdf" | "word" | "powerpoint" | null;
+
+// Libellé, extension et intitulé de chaque format proposé par la modale. Les
+// extensions doivent suivre celles servies par /api/report : c'est ce nom que
+// le navigateur écrit sur le disque.
+const FORMATS_RAPPORT = [
+  { id: "pdf" as const, label: "PDF", fichier: "rapport_analyse.pdf" },
+  { id: "word" as const, label: "Word", fichier: "rapport_analyse.docx" },
+  { id: "powerpoint" as const, label: "PowerPoint", fichier: "rapport_analyse.pptx" },
+];
 type TrainingType = "predictif" | "timeseries" | null;
+type TimeSeriesEngine = "timecopilot" | "autoforecast";
+
+/** Verdict du backend sur le modèle LLM sélectionné, obtenu AVANT tout lancement :
+ *  TimeCopilot pilote sa prévision par appels d'outils, qu'un petit modèle local
+ *  ne sait pas produire. Le savoir avant évite d'attendre plusieurs minutes pour
+ *  se voir refuser. */
+interface EngineInfo {
+  tool_use: boolean;
+  timecopilot_installe: boolean;
+  engine: TimeSeriesEngine;
+  avertissement: string | null;
+  message_repli: string | null;
+}
+
+/** Colonnes proposées par le LLM, et son motif. `colonne` (supervisé) ou le
+ *  couple date/valeur (séries) valent null si aucune proposition exploitable. */
+interface Proposition {
+  colonne?: string | null;
+  date?: string | null;
+  valeur?: string | null;
+  motif?: string;
+}
 
 const FAMILLES_LABEL: Record<string, string> = {
   regression: "Régression",
@@ -139,7 +163,15 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
   const [tsDateCol, setTsDateCol] = useState("");
   const [tsValueCol, setTsValueCol] = useState("");
   const [tsHorizon, setTsHorizon] = useState("12");
-  const [tsEngine, setTsEngine] = useState<"auto" | "timecopilot">("timecopilot");
+  // Moteur réellement exécuté, décidé par le backend selon le modèle LLM choisi
+  // (voir /models/timeseries-engine) : TimeCopilot, ou AutoForecast en repli.
+  const [tsEngine, setTsEngine] = useState<TimeSeriesEngine>("timecopilot");
+  const [engineInfo, setEngineInfo] = useState<EngineInfo | null>(null);
+  // L'utilisateur a accepté le repli malgré l'avertissement.
+  const [repliAccepte, setRepliAccepte] = useState(false);
+  // Proposition du LLM (présélection argumentée, jamais une décision).
+  const [proposition, setProposition] = useState<Proposition | null>(null);
+  const [propositionEnCours, setPropositionEnCours] = useState(false);
   const anyModelPossible = feasibility.classification || feasibility.regression || feasibility.prediction || tsCandidates.feasible;
 
   useEffect(() => {
@@ -264,43 +296,51 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
     }
   };
 
-  const downloadReport = async (format: "pdf" | "word", keyPoints = "") => {
+  const downloadReport = async (format: "pdf" | "word" | "powerpoint", keyPoints = "") => {
     if (!sessionId) {
       alert("Aucune session active. Chargez d'abord un fichier.");
       return;
     }
+    const descripteur = FORMATS_RAPPORT.find((f) => f.id === format)!;
     try {
       const apiUrl = API_URL;
-      const reportTitle = keyPoints.trim()
-        ? `Rapport d'analyse de données — ${keyPoints.trim().slice(0, 80)}`
-        : "Rapport d'analyse de données";
+      const model = typeof window !== "undefined" ? localStorage.getItem("selected_model") || undefined : undefined;
       const res = await fetch(`${apiUrl}/api/report`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           session_id: sessionId,
-          title: reportTitle,
+          // Le titre reste le titre : les points clés sont une consigne de
+          // rédaction, transmise comme telle et non collée à la page de garde.
+          title: "Rapport d'analyse de données",
           institution: "CITADEL — Ouagadougou, Burkina Faso",
           format,
+          key_points: keyPoints.trim(),
+          model,
         }),
       });
-      if (!res.ok) throw new Error("Erreur serveur");
+      if (!res.ok) {
+        // Le backend explique désormais pourquoi la rédaction a échoué ; le
+        // message générique laissait l'utilisateur sans piste.
+        const detail = await res.json().catch(() => null);
+        throw new Error(detail?.detail || "Erreur serveur");
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       addGeneratedItem({
         id: `${Date.now()}-${format}`,
-        title: keyPoints.trim() ? `Rapport • ${keyPoints.trim().slice(0, 40)}` : `Rapport d'analyse (${format === "pdf" ? "PDF" : "Word"})`,
+        title: keyPoints.trim() ? `Rapport • ${keyPoints.trim().slice(0, 40)}` : `Rapport d'analyse (${descripteur.label})`,
         kind: "report",
         format,
         url,
       });
       const a = document.createElement("a");
       a.href = url;
-      a.download = format === "pdf" ? "rapport_analyse.pdf" : "rapport_analyse.docx";
+      a.download = descripteur.fichier;
       a.click();
       window.open(url, "_blank", "noopener,noreferrer");
-    } catch {
-      alert("Erreur lors de la génération du rapport.");
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Erreur lors de la génération du rapport.");
     }
   };
 
@@ -322,18 +362,27 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
     window.open(`/dashboard/model/${id}`, "_blank");
   };
 
-  const openReportModal = () => {
-    setReportFormat(null);
+  // `formatInitial` permet d'entrer dans la modale depuis une carte qui nomme
+  // déjà son format : le choix est alors présélectionné, sans empêcher d'en
+  // changer une fois la modale ouverte.
+  const openReportModal = (formatInitial: ReportFormat = null) => {
+    setReportFormat(formatInitial);
     setReportKeyPoints("");
     setIsReportModalOpen(true);
   };
 
   const openTrainingModal = () => {
     setTrainingType(null);
+    // Présélections de repli, remplacées par la proposition du LLM dès qu'un type
+    // d'entraînement est choisi. `candidates[0]` n'est que l'ordre du fichier :
+    // sur un CSV qui commence par « id », cela proposait « id » comme cible.
     setSupTarget(supCibles[0]?.colonne ?? "");
     setTsDateCol(tsCandidates.date_columns[0] ?? "");
     setTsValueCol(tsCandidates.value_columns[0] ?? "");
-    setTsEngine("auto");
+    setTsEngine("timecopilot");
+    setEngineInfo(null);
+    setRepliAccepte(false);
+    setProposition(null);
     setIsTrainingModalOpen(true);
   };
 
@@ -347,6 +396,65 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
       setIsGeneratingReport(false);
     }
   };
+
+  /** Choix du type d'entraînement. Les états dérivés sont remis à zéro ici, dans
+   *  le gestionnaire d'événement, et non dans l'effet qui suit : y appeler
+   *  setState de façon synchrone déclenche des rendus en cascade. */
+  const choisirTypeEntrainement = (type: Exclude<TrainingType, null>) => {
+    setTrainingType(type);
+    setProposition(null);
+    setPropositionEnCours(true);
+    setEngineInfo(null);
+    setRepliAccepte(false);
+  };
+
+  // Dès qu'un type d'entraînement est choisi dans la modale : on demande au LLM
+  // quelles colonnes modéliser, et — pour les séries — quel moteur tournera
+  // réellement. Les deux appels sont faits ici, pas à l'ouverture, car ils
+  // dépendent du type choisi.
+  useEffect(() => {
+    if (!isTrainingModalOpen || !trainingType || !sessionId) return;
+    let annule = false;
+    const model = typeof window !== "undefined" ? localStorage.getItem("selected_model") || undefined : undefined;
+
+    if (trainingType === "timeseries") {
+      const params = new URLSearchParams(model ? { model } : {});
+      fetch(`${API_URL}/api/models/timeseries-engine?${params}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((info: EngineInfo | null) => {
+          if (annule || !info) return;
+          setEngineInfo(info);
+          setTsEngine(info.engine);
+        })
+        .catch(() => { /* le backend tranchera de toute façon au lancement */ });
+    }
+
+    fetch(`${API_URL}/api/models/propose-variables`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        kind: trainingType === "timeseries" ? "timeseries" : "supervised",
+        model,
+      }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: Proposition | null) => {
+        if (annule || !data) return;
+        setProposition(data);
+        // Présélection seulement : les sélecteurs restent pleinement modifiables.
+        if (trainingType === "timeseries") {
+          if (data.date) setTsDateCol(data.date);
+          if (data.valeur) setTsValueCol(data.valeur);
+        } else if (data.colonne) {
+          setSupTarget(data.colonne);
+        }
+      })
+      .catch(() => { /* sans proposition, les présélections de repli tiennent */ })
+      .finally(() => { if (!annule) setPropositionEnCours(false); });
+
+    return () => { annule = true; };
+  }, [isTrainingModalOpen, trainingType, sessionId]);
 
   const handleTrainingSubmit = async () => {
     if (!trainingType) return;
@@ -463,7 +571,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
           </GlareHover>
 
           <GlareHover
-            onClick={openReportModal}
+            onClick={() => openReportModal()}
             background="var(--bubble-ai)"
             borderColor="var(--border-color)"
             borderRadius="14px"
@@ -482,6 +590,29 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
             <FileText size={22} strokeWidth={1.7} />
             <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-main)", marginTop: "10px", lineHeight: 1.3 }}>
               Générer un rapport
+            </div>
+          </GlareHover>
+
+          <GlareHover
+            onClick={() => openReportModal("powerpoint")}
+            background="var(--bubble-ai)"
+            borderColor="var(--border-color)"
+            borderRadius="14px"
+            glareOpacity={0.3}
+            style={{
+              padding: "16px 14px",
+              cursor: "pointer",
+              minHeight: "90px",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "space-between",
+            }}
+            onMouseEnter={(e) => (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-user)')}
+            onMouseLeave={(e) => (e.currentTarget as HTMLElement).style.setProperty('--gh-bg', 'var(--bubble-ai)')}
+          >
+            <Presentation size={22} strokeWidth={1.7} />
+            <div style={{ fontSize: "13px", fontWeight: 500, color: "var(--text-main)", marginTop: "10px", lineHeight: 1.3 }}>
+              Générer un PowerPoint
             </div>
           </GlareHover>
 
@@ -601,7 +732,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
                 <span style={{ flex: 1 }}>
                   <div style={{ fontSize: "12px", fontWeight: 600 }}>{item.title}</div>
                   <div style={{ fontSize: "10px", color: "var(--text-muted)", marginTop: "3px" }}>
-                    {`Rapport • ${item.format?.toUpperCase() || "Fichier"}`}
+                    {`Rapport • ${FORMATS_RAPPORT.find((f) => f.id === item.format)?.label || "Fichier"}`}
                   </div>
                 </span>
                 <span style={{ fontSize: "10px", color: "var(--accent-color)", fontWeight: 700 }}>Ouvrir</span>
@@ -672,20 +803,16 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
           <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
             <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-main)" }}>Choisir le format</div>
             <div style={{ display: "flex", gap: "10px" }}>
-              <button
-                type="button"
-                onClick={() => setReportFormat("pdf")}
-                style={{ flex: 1, padding: "10px 12px", borderRadius: "10px", border: reportFormat === "pdf" ? "1px solid var(--accent-color)" : "1px solid var(--border-muted)", background: reportFormat === "pdf" ? "var(--accent-soft)" : "var(--bubble-ai)", color: "var(--text-main)", fontWeight: 600 }}
-              >
-                PDF
-              </button>
-              <button
-                type="button"
-                onClick={() => setReportFormat("word")}
-                style={{ flex: 1, padding: "10px 12px", borderRadius: "10px", border: reportFormat === "word" ? "1px solid var(--accent-color)" : "1px solid var(--border-muted)", background: reportFormat === "word" ? "var(--accent-soft)" : "var(--bubble-ai)", color: "var(--text-main)", fontWeight: 600 }}
-              >
-                Word
-              </button>
+              {FORMATS_RAPPORT.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setReportFormat(f.id)}
+                  style={{ flex: 1, padding: "10px 12px", borderRadius: "10px", border: reportFormat === f.id ? "1px solid var(--accent-color)" : "1px solid var(--border-muted)", background: reportFormat === f.id ? "var(--accent-soft)" : "var(--bubble-ai)", color: "var(--text-main)", fontWeight: 600 }}
+                >
+                  {f.label}
+                </button>
+              ))}
             </div>
           </div>
           <button
@@ -717,7 +844,7 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
                   key={opt.id}
                   type="button"
                   disabled={!opt.possible}
-                  onClick={() => setTrainingType(opt.id)}
+                  onClick={() => choisirTypeEntrainement(opt.id)}
                   title={opt.possible ? undefined : "Ce jeu de données n'a pas les colonnes nécessaires pour ce type de modèle."}
                   style={{
                     flex: "1 1 45%",
@@ -742,6 +869,28 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
             )}
           </div>
 
+          {/* Proposition du LLM : une présélection argumentée, que les sélecteurs
+              ci-dessous laissent librement modifier. */}
+          {trainingType && (propositionEnCours || proposition?.motif) && (
+            <div style={{ padding: "10px 12px", borderRadius: "10px", background: "var(--bubble-ai)", border: "1px dashed var(--border-muted)" }}>
+              {propositionEnCours ? (
+                <div style={{ fontSize: "11px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "7px" }}>
+                  <Loader2 size={13} className="animate-spin" />
+                  Analyse des colonnes par le modèle…
+                </div>
+              ) : (
+                <>
+                  <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-main)" }}>
+                    Proposition du modèle
+                  </div>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "3px", lineHeight: 1.5 }}>
+                    {proposition?.motif} Vous pouvez la modifier ci-dessous.
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           {trainingType === "timeseries" ? (
             /* Configuration série temporelle : colonnes + horizon + moteur */
             <>
@@ -764,17 +913,40 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
                   <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-main)" }}>Horizon (périodes)</label>
                   <input type="number" min={1} value={tsHorizon} onChange={(e) => setTsHorizon(e.target.value)} style={{ padding: "10px 12px", borderRadius: "10px", border: "1px solid var(--border-muted)", background: "var(--bubble-ai)", color: "var(--text-main)" }} />
                 </div>
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
-                  <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-main)" }}>Moteur</label>
-                  <select value={tsEngine} onChange={(e) => setTsEngine(e.target.value as "auto" | "timecopilot")} style={{ padding: "10px 12px", borderRadius: "10px", border: "1px solid var(--border-muted)", background: "var(--bubble-ai)", color: "var(--text-main)" }}>
-                    <option value="timecopilot">Modèles auto</option>
-                    <option value="auto">ARIMA complet</option>
-                  </select>
-                </div>
               </div>
-              <small style={{ color: "var(--text-muted)", fontSize: "11px" }}>
-                « Modèles auto » met plusieurs modèles en concurrence et explique son choix. « ARIMA complet » suit la méthodologie détaillée (stationnarité, sélection, diagnostics des résidus, validation out-of-sample). Comptez jusqu’à ~2 minutes.
-              </small>
+
+              {/* Moteur : TimeCopilot, sauf si le modèle LLM sélectionné ne gère
+                  pas le tool-use — le backend l'a dit AVANT le lancement. */}
+              {engineInfo && engineInfo.engine === "timecopilot" ? (
+                <small style={{ color: "var(--text-muted)", fontSize: "11px" }}>
+                  Moteur <strong>TimeCopilot</strong> : il analyse la série, met plusieurs modèles en
+                  concurrence, retient le meilleur et argumente son choix. Comptez quelques minutes.
+                </small>
+              ) : engineInfo ? (
+                <div style={{ padding: "12px", borderRadius: "10px", background: "var(--bubble-ai)", border: "1px solid var(--warning-border, #b06000)" }}>
+                  <div style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-main)", marginBottom: "6px" }}>
+                    TimeCopilot indisponible pour ce modèle
+                  </div>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                    {engineInfo.avertissement}
+                  </div>
+                  {engineInfo.message_repli && (
+                    <div style={{ fontSize: "11px", color: "var(--text-muted)", lineHeight: 1.5, marginTop: "8px" }}>
+                      {engineInfo.message_repli}
+                    </div>
+                  )}
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", marginTop: "10px", fontSize: "11px", color: "var(--text-main)", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={repliAccepte}
+                      onChange={(e) => setRepliAccepte(e.target.checked)}
+                      style={{ marginTop: "2px" }}
+                    />
+                    <span>Continuer quand même avec AutoForecast, en acceptant des résultats
+                      possiblement moins bons et non argumentés.</span>
+                  </label>
+                </div>
+              ) : null}
             </>
           ) : trainingType === "predictif" ? (
             /* On ne choisit QUE la variable à prédire : la famille en découle et
@@ -816,14 +988,27 @@ export default function StudioPanel({ sessionId, generatedContent, chatModelPend
               </small>
             </>
           ) : null}
-          <button
-            type="button"
-            onClick={handleTrainingSubmit}
-            disabled={!trainingType || modalTraining || (trainingType === "timeseries" ? (!tsDateCol || !tsValueCol) : !supTarget)}
-            style={{ padding: "11px 12px", borderRadius: "10px", border: "none", background: "var(--accent-color)", color: "white", fontWeight: 700, cursor: "pointer", opacity: (!trainingType || modalTraining || (trainingType === "timeseries" ? (!tsDateCol || !tsValueCol) : !supTarget)) ? 0.6 : 1 }}
-          >
-            {modalTraining ? "Entraînement en cours…" : "Entraîner"}
-          </button>
+          {(() => {
+            // Le repli AutoForecast doit être explicitement accepté : l'utilisateur
+            // avait demandé TimeCopilot, on ne lui substitue pas un autre moteur
+            // sans son accord.
+            const repliRequis = trainingType === "timeseries"
+              && engineInfo != null && engineInfo.engine !== "timecopilot";
+            const bloque = !trainingType || modalTraining
+              || (trainingType === "timeseries" ? (!tsDateCol || !tsValueCol) : !supTarget)
+              || (repliRequis && !repliAccepte);
+            return (
+              <button
+                type="button"
+                onClick={handleTrainingSubmit}
+                disabled={bloque}
+                style={{ padding: "11px 12px", borderRadius: "10px", border: "none", background: "var(--accent-color)", color: "white", fontWeight: 700, cursor: bloque ? "not-allowed" : "pointer", opacity: bloque ? 0.6 : 1 }}
+              >
+                {modalTraining ? "Entraînement en cours…"
+                  : repliRequis ? "Entraîner avec AutoForecast" : "Entraîner"}
+              </button>
+            );
+          })()}
         </div>
       </Modal>
     </>

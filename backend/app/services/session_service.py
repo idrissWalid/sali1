@@ -150,6 +150,11 @@ def delete_session_cascade(session_id: str) -> Optional[dict]:
     cursor.execute("SELECT file_path FROM models WHERE session_id = ?", (session_id,))
     file_paths.extend(row["file_path"] for row in cursor.fetchall())
 
+    # Instantanés des versions antérieures : la ligne part en cascade, le
+    # fichier resterait orphelin dans uploads/.
+    cursor.execute("SELECT file_path FROM dataset_versions WHERE session_id = ?", (session_id,))
+    file_paths.extend(row["file_path"] for row in cursor.fetchall())
+
     cursor.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
     conn.commit()
     conn.close()
@@ -343,6 +348,11 @@ def list_datasets(session_id: str) -> list[dict]:
             "column_names": profile.get("column_names") or [],
         })
 
+    # Numéro de version : sans lui, rien à l'écran ne distingue un jeu tel
+    # qu'importé d'un jeu modifié trois fois depuis le chat.
+    for jeu in datasets:
+        jeu["version"] = version_dataset(session_id, jeu["id"])
+
     return datasets
 
 
@@ -437,6 +447,156 @@ APERÇU (5 premières lignes) :
 
 Si la question porte sur ces données chiffrées, réponds en te basant sur ce tableau (calculs, comparaisons, tendances), en plus des extraits textuels du document.
 """
+
+# ── Modification d'un jeu de données, et retour en arrière ───────────────────
+# Une transformation demandée en langage naturel écrase les données de
+# l'utilisateur : elle n'est acceptable que réversible. L'état courant est donc
+# empilé dans `dataset_versions` AVANT d'être remplacé, et « annuler » dépile.
+
+def _ecrire_instantane(session_id: str, dataset_id: str, motif: str) -> int:
+    """Empile l'état courant du jeu. Renvoie le numéro de version ainsi archivé."""
+    octets, filename, profile, stats = get_dataset(session_id, dataset_id)
+    if octets is None:
+        raise ValueError("Jeu de données introuvable.")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COALESCE(MAX(version), 0) AS n FROM dataset_versions WHERE session_id = ? AND dataset_id = ?",
+        (session_id, dataset_id),
+    )
+    version = cursor.fetchone()["n"] + 1
+
+    version_id = str(uuid.uuid4())
+    chemin = os.path.join(UPLOADS_DIR, f"{session_id}_v{version}_{version_id}_{filename or 'donnees.csv'}")
+    with open(chemin, "wb") as f:
+        f.write(octets)
+
+    cursor.execute(
+        """
+        INSERT INTO dataset_versions
+            (id, session_id, dataset_id, version, filename, file_path, data_profile, data_stats, motif)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (version_id, session_id, dataset_id, version, filename, chemin,
+         dumps_safe(profile), dumps_safe(stats), motif),
+    )
+    conn.commit()
+    conn.close()
+    return version
+
+
+def _ecrire_etat_courant(session_id: str, dataset_id: str, octets: bytes,
+                         filename: str, profile: dict, stats: dict) -> None:
+    """Écrit l'état vivant du jeu, là où il vit selon son type."""
+    if dataset_id == MAIN_DATASET_ID:
+        save_file_bytes(session_id, octets, filename)
+        save_data_context(session_id, profile, stats, filename)
+        return
+
+    if dataset_id == EMBEDDED_DATASET_ID:
+        save_embedded_table(session_id, octets, filename, profile, stats)
+        return
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_path FROM datasets WHERE id = ? AND session_id = ?",
+                   (dataset_id, session_id))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise ValueError("Jeu de données introuvable.")
+
+    with open(row["file_path"], "wb") as f:
+        f.write(octets)
+    cursor.execute(
+        "UPDATE datasets SET filename = ?, data_profile = ?, data_stats = ? WHERE id = ? AND session_id = ?",
+        (filename, dumps_safe(profile), dumps_safe(stats), dataset_id, session_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def remplacer_dataset(session_id: str, dataset_id: str, octets: bytes,
+                      profile: dict, stats: dict, motif: str,
+                      nouveau_filename: str | None = None) -> dict:
+    """Remplace le contenu d'un jeu, après archivage de son état précédent.
+
+    Le jeu garde son identité : les questions suivantes portent naturellement
+    sur la version à jour, sans que l'utilisateur ait à désigner laquelle est la
+    bonne. `nouveau_filename` sert au changement de format — le tableau modifié
+    ressort en CSV, et l'extension pilote le lecteur utilisé en aval.
+    """
+    _, filename, _, _ = get_dataset(session_id, dataset_id)
+    if filename is None:
+        return {"status": "error", "message": "Jeu de données introuvable dans cette session."}
+
+    version_archivee = _ecrire_instantane(session_id, dataset_id, motif)
+    final = nouveau_filename or filename
+    _ecrire_etat_courant(session_id, dataset_id, octets, final, profile, stats)
+    return {"status": "ok", "version": version_archivee + 1, "filename": final,
+            "format_change": final != filename}
+
+
+def annuler_derniere_modification(session_id: str, dataset_id: str) -> dict:
+    """Restaure l'état archivé le plus récent, et le retire de la pile."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, version, filename, file_path, data_profile, data_stats, motif
+        FROM dataset_versions
+        WHERE session_id = ? AND dataset_id = ?
+        ORDER BY version DESC LIMIT 1
+        """,
+        (session_id, dataset_id),
+    )
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return {"status": "error", "message": "Aucune modification à annuler sur ce jeu de données."}
+
+    if not row["file_path"] or not os.path.exists(row["file_path"]):
+        cursor.execute("DELETE FROM dataset_versions WHERE id = ?", (row["id"],))
+        conn.commit()
+        conn.close()
+        return {"status": "error", "message": "L'état précédent n'est plus disponible sur le disque."}
+
+    with open(row["file_path"], "rb") as f:
+        octets = f.read()
+    profile = json.loads(row["data_profile"]) if row["data_profile"] else {}
+    stats = json.loads(row["data_stats"]) if row["data_stats"] else {}
+    motif = row["motif"]
+    conn.close()
+
+    _ecrire_etat_courant(session_id, dataset_id, octets, row["filename"], profile, stats)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM dataset_versions WHERE id = ?", (row["id"],))
+    conn.commit()
+    conn.close()
+    try:
+        os.remove(row["file_path"])
+    except OSError:
+        pass  # l'archive est déjà réappliquée : son fichier n'est plus qu'un doublon
+
+    return {"status": "ok", "version": row["version"], "motif": motif,
+            "filename": row["filename"]}
+
+
+def version_dataset(session_id: str, dataset_id: str) -> int:
+    """Numéro de version courant d'un jeu (1 = jamais modifié)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COALESCE(MAX(version), 0) AS n FROM dataset_versions WHERE session_id = ? AND dataset_id = ?",
+        (session_id, dataset_id),
+    )
+    n = cursor.fetchone()["n"]
+    conn.close()
+    return n + 1
+
 
 def fusionner_jeux(session_id: str, base_id: str, ajout_id: str) -> dict:
     """Concatène deux jeux de même structure en un troisième.
@@ -597,13 +757,13 @@ ci-dessus, mais tu n'as PAS leur contenu : ne cite aucun chiffre à leur sujet.
 Pour les analyser, l'utilisateur doit les sélectionner dans le tableau de bord.
 """
 
-def save_message_to_report(session_id: str, role: str, text: str, images: list = [], sources: list = []):
+def save_message_to_report(session_id: str, role: str, text: str, images: list = [], sources: list = [], charts: list = []):
     """Sauvegarde ou met à jour les échanges pour le rapport final et l'historique."""
     db_role = "assistant" if role == "model" else role
-    
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     # Si c'est l'assistant, on tente de mettre à jour le dernier message 'assistant' existant
     # (qui a été créé juste avant par add_to_history)
     if db_role == "assistant":
@@ -614,8 +774,8 @@ def save_message_to_report(session_id: str, role: str, text: str, images: list =
         row = cursor.fetchone()
         if row:
             cursor.execute(
-                "UPDATE messages SET content = ?, images = ?, sources = ? WHERE id = ?",
-                (text, json.dumps(images), json.dumps(sources), row["id"])
+                "UPDATE messages SET content = ?, images = ?, sources = ?, charts = ? WHERE id = ?",
+                (text, json.dumps(images), json.dumps(sources), json.dumps(charts), row["id"])
             )
             conn.commit()
             conn.close()
@@ -623,8 +783,8 @@ def save_message_to_report(session_id: str, role: str, text: str, images: list =
 
     # Sinon (ou si aucun message trouvé), on insère
     cursor.execute(
-        "INSERT INTO messages (session_id, role, content, images, sources) VALUES (?, ?, ?, ?, ?)",
-        (session_id, db_role, text, json.dumps(images), json.dumps(sources))
+        "INSERT INTO messages (session_id, role, content, images, sources, charts) VALUES (?, ?, ?, ?, ?, ?)",
+        (session_id, db_role, text, json.dumps(images), json.dumps(sources), json.dumps(charts))
     )
     conn.commit()
     conn.close()
@@ -636,28 +796,61 @@ def get_report_data(session_id: str) -> dict:
         
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT role, content as text, images, sources FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,))
+    cursor.execute("SELECT role, content as text, images, sources, charts FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,))
     rows = cursor.fetchall()
+
+    # Modèles entraînés dans la session : un rapport qui les ignore passe à côté
+    # du seul résultat chiffré et reproductible produit pendant l'analyse.
+    cursor.execute(
+        "SELECT name, type, features, metrics FROM models WHERE session_id = ? ORDER BY created_at ASC",
+        (session_id,),
+    )
+    model_rows = cursor.fetchall()
     conn.close()
-    
+
     report_messages = []
     for r in rows:
         report_messages.append({
             "role": r["role"],
             "text": r["text"],
             "images": json.loads(r["images"]) if r["images"] else [],
-            "sources": json.loads(r["sources"]) if r["sources"] else []
+            "sources": json.loads(r["sources"]) if r["sources"] else [],
+            "charts": json.loads(r["charts"]) if r["charts"] else [],
         })
-        
+
+    trained_models = [
+        {
+            "name": m["name"],
+            "type": m["type"],
+            "features": json.loads(m["features"]) if m["features"] else [],
+            "metrics": json.loads(m["metrics"]) if m["metrics"] else {},
+        }
+        for m in model_rows
+    ]
+
+    # Les graphiques interactifs n'existent que dans le navigateur : pour le
+    # rapport, chaque spec est rendue en PNG afin qu'un export ne perde pas les
+    # visualisations affichées dans le chat.
+    from app.services.chart_render import render_specs_to_png
+
     return {
         "messages": report_messages,
         "analysis": session.get("initial_analysis", ""),
         "filename": session.get("filename", ""),
+        # Chiffres réels du jeu de données : sans eux le rapport ne peut que
+        # paraphraser le fil de discussion, où les nombres sont déjà de seconde main.
+        "profile": session.get("data_profile") or {},
+        "stats": session.get("data_stats") or {},
+        "models": trained_models,
         "images": [
             img
             for msg in report_messages
             for img in msg.get("images", [])
-        ],
+        ] + render_specs_to_png([
+            chart
+            for msg in report_messages
+            for chart in msg.get("charts", [])
+        ]),
     }
 
 def save_initial_analysis(session_id: str, text: str):

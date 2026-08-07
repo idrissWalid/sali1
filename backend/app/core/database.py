@@ -63,6 +63,12 @@ def init_db():
     );
     """)
 
+    # Migration légère : graphiques structurés d'un message (specs JSON rendues
+    # en interactif par le client), à côté des PNG historiques de `images`.
+    message_columns = {row["name"] for row in cursor.execute("PRAGMA table_info(messages)").fetchall()}
+    if "charts" not in message_columns:
+        cursor.execute("ALTER TABLE messages ADD COLUMN charts TEXT")
+
     # Datasets additionnels rattachés à une session. Le fichier principal et le
     # tableau extrait d'un PDF restent portés par les colonnes de `sessions`
     # (aucune migration de l'existant n'est donc nécessaire) : cette table
@@ -77,6 +83,26 @@ def init_db():
         data_profile TEXT,
         data_stats TEXT,
         source TEXT DEFAULT 'upload',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
+    );
+    """)
+
+    # États antérieurs d'un jeu de données, empilés avant chaque modification
+    # demandée en langage naturel. C'est ce qui rend « annule la dernière
+    # modification » possible : sans instantané, une transformation serait
+    # irréversible et le prompt deviendrait une opération à risque.
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS dataset_versions (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        dataset_id TEXT,
+        version INTEGER,
+        filename TEXT,
+        file_path TEXT,
+        data_profile TEXT,
+        data_stats TEXT,
+        motif TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES sessions (id) ON DELETE CASCADE
     );

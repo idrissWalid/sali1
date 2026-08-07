@@ -22,6 +22,7 @@ class MessageItem(BaseModel):
     role: str
     text: str
     images: Optional[List[str]] = []
+    charts: Optional[List[dict]] = []
     sources: Optional[List[dict]] = []
 
 class SessionDetails(BaseModel):
@@ -62,16 +63,17 @@ async def get_session_details(session_id: str):
         
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT role, content as text, images, sources FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,))
+    cursor.execute("SELECT role, content as text, images, sources, charts FROM messages WHERE session_id = ? ORDER BY id ASC", (session_id,))
     msg_rows = cursor.fetchall()
     conn.close()
-    
+
     messages = []
     for m in msg_rows:
         messages.append({
             "role": m["role"],
             "text": m["text"],
             "images": json.loads(m["images"]) if m["images"] else [],
+            "charts": json.loads(m["charts"]) if m["charts"] else [],
             "sources": json.loads(m["sources"]) if m["sources"] else []
         })
         
